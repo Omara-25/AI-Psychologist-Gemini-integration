@@ -1,0 +1,306 @@
+# AI Psychologist with Gemini Voice Integration - Makefile
+# Provides convenient commands for development tasks
+
+.PHONY: help setup install test run clean docker deploy lint format check security
+
+# Default target
+help: ## Show this help message
+	@echo "AI Psychologist with Gemini Voice Integration"
+	@echo "============================================="
+	@echo ""
+	@echo "Available commands:"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+
+# Setup and Installation
+setup: ## Run the complete setup process
+	@echo "🚀 Running complete setup..."
+	python setup.py
+
+install: ## Install dependencies
+	@echo "📦 Installing dependencies..."
+	pip install --upgrade pip
+	pip install -r requirements.txt
+
+install-dev: ## Install development dependencies
+	@echo "📦 Installing development dependencies..."
+	pip install --upgrade pip
+	pip install -r requirements.txt
+	pip install black flake8 mypy pytest-cov bandit pre-commit
+
+# Development
+run: ## Run the development server
+	@echo "🏃 Starting development server..."
+	python main.py
+
+run-prod: ## Run in production mode
+	@echo "🏭 Starting production server..."
+	ENVIRONMENT=production uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
+
+dev: ## Run with hot reload
+	@echo "🔄 Starting development server with hot reload..."
+	uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+# Testing
+test: ## Run all tests
+	@echo "🧪 Running tests..."
+	python -m pytest test_main.py -v
+
+test-cov: ## Run tests with coverage
+	@echo "🧪 Running tests with coverage..."
+	python -m pytest test_main.py -v --cov=main --cov-report=html --cov-report=term
+
+test-quick: ## Run quick basic tests
+	@echo "⚡ Running quick tests..."
+	python test_main.py
+
+# Code Quality
+lint: ## Run linting
+	@echo "🔍 Running linting..."
+	flake8 main.py test_main.py --max-line-length=88
+
+format: ## Format code with Black
+	@echo "🎨 Formatting code..."
+	black main.py test_main.py setup.py
+
+format-check: ## Check if code is formatted
+	@echo "✅ Checking code formatting..."
+	black --check main.py test_main.py setup.py
+
+type-check: ## Run type checking
+	@echo "🔍 Running type checking..."
+	mypy main.py --ignore-missing-imports
+
+# Security
+security: ## Run security checks
+	@echo "🔒 Running security checks..."
+	bandit -r . -f json -o security-report.json || true
+	bandit -r . -f txt
+
+check: ## Run all quality checks
+	@echo "🔍 Running all quality checks..."
+	$(MAKE) format-check
+	$(MAKE) lint
+	$(MAKE) type-check
+	$(MAKE) security
+	$(MAKE) test
+
+# Docker
+docker-build: ## Build Docker image
+	@echo "🐳 Building Docker image..."
+	docker build -t ai-psychologist:latest .
+
+docker-run: ## Run Docker container
+	@echo "🐳 Running Docker container..."
+	docker run -p 8000:8000 --env-file .env ai-psychologist:latest
+
+docker-dev: ## Run Docker Compose for development
+	@echo "🐳 Starting Docker Compose development environment..."
+	docker-compose up --build
+
+docker-prod: ## Run Docker Compose for production
+	@echo "🐳 Starting Docker Compose production environment..."
+	docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+docker-stop: ## Stop Docker Compose
+	@echo "🛑 Stopping Docker Compose..."
+	docker-compose down
+
+docker-clean: ## Clean Docker images and containers
+	@echo "🧹 Cleaning Docker..."
+	docker-compose down -v
+	docker system prune -f
+
+# Railway Deployment
+deploy-railway: ## Deploy to Railway
+	@echo "🚂 Deploying to Railway..."
+	railway up
+
+railway-login: ## Login to Railway
+	@echo "🔑 Logging into Railway..."
+	railway login
+
+railway-status: ## Check Railway deployment status
+	@echo "📊 Checking Railway status..."
+	railway status
+
+railway-logs: ## View Railway logs
+	@echo "📋 Viewing Railway logs..."
+	railway logs --follow
+
+railway-env: ## Set Railway environment variables
+	@echo "⚙️ Setting Railway environment variables..."
+	@read -p "Enter Gemini API Key: " api_key; \
+	railway variables set GEMINI_API_KEY="$$api_key"
+	railway variables set ENVIRONMENT=production
+	railway variables set PORT=8000
+
+# Database (if using)
+db-init: ## Initialize database
+	@echo "🗄️ Initializing database..."
+	python -c "from main import init_db; init_db()"
+
+db-migrate: ## Run database migrations
+	@echo "🗄️ Running database migrations..."
+	alembic upgrade head
+
+db-reset: ## Reset database
+	@echo "🗄️ Resetting database..."
+	rm -f app.db
+	$(MAKE) db-init
+
+# Environment Management
+env-setup: ## Setup environment file
+	@echo "⚙️ Setting up environment file..."
+	cp .env.example .env
+	@echo "✅ .env file created. Please edit it with your configuration."
+
+env-check: ## Check environment configuration
+	@echo "⚙️ Checking environment configuration..."
+	python -c "from main import settings; print('✅ Environment configuration is valid')"
+
+# Cleanup
+clean: ## Clean up temporary files
+	@echo "🧹 Cleaning up..."
+	find . -type f -name "*.pyc" -delete
+	find . -type d -name "__pycache__" -delete
+	find . -type f -name "*.log" -delete
+	rm -rf .pytest_cache/
+	rm -rf htmlcov/
+	rm -rf .coverage
+	rm -rf .mypy_cache/
+	rm -f security-report.json
+
+clean-all: ## Clean everything including virtual environment
+	@echo "🧹 Deep cleaning..."
+	$(MAKE) clean
+	rm -rf venv/
+	rm -rf node_modules/
+	docker system prune -af
+
+# Documentation
+docs: ## Generate documentation
+	@echo "📚 Generating documentation..."
+	@echo "Documentation files:"
+	@echo "  - README.md (Main documentation)"
+	@echo "  - DEPLOYMENT_PLAN.md (Deployment guide)"
+	@echo "  - CONTRIBUTING.md (Contributing guide)"
+	@echo "  - API docs available at: http://localhost:8000/docs"
+
+docs-serve: ## Serve documentation locally
+	@echo "📚 Serving documentation..."
+	python -m http.server 8080
+
+# Monitoring and Logs
+logs: ## View application logs
+	@echo "📋 Viewing logs..."
+	tail -f *.log 2>/dev/null || echo "No log files found"
+
+monitor: ## Monitor application health
+	@echo "💓 Monitoring application health..."
+	watch -n 5 'curl -s http://localhost:8000/health | python -m json.tool'
+
+# Backup and Restore
+backup: ## Backup important files
+	@echo "💾 Creating backup..."
+	tar -czf backup_$(shell date +%Y%m%d_%H%M%S).tar.gz \
+		--exclude=venv \
+		--exclude=__pycache__ \
+		--exclude=.git \
+		--exclude=node_modules \
+		.
+
+# Development Tools
+install-tools: ## Install development tools
+	@echo "🔧 Installing development tools..."
+	npm install -g @railway/cli
+	pip install pre-commit
+	pre-commit install
+
+update-deps: ## Update dependencies
+	@echo "🔄 Updating dependencies..."
+	pip list --outdated --format=freeze | grep -v '^\-e' | cut -d = -f 1 | xargs -n1 pip install -U
+
+# Health Checks
+health: ## Check application health
+	@echo "💓 Checking application health..."
+	curl -s http://localhost:8000/health | python -m json.tool
+
+health-voice: ## Test voice functionality
+	@echo "🎤 Testing voice endpoints..."
+	curl -s http://localhost:8000/api/voices | python -m json.tool
+
+# Quick Development Workflow
+dev-setup: ## Quick development setup
+	@echo "⚡ Quick development setup..."
+	$(MAKE) install
+	$(MAKE) env-setup
+	@echo "✅ Development setup complete!"
+	@echo "📝 Next steps:"
+	@echo "   1. Edit .env file with your Gemini API key"
+	@echo "   2. Run: make run"
+	@echo "   3. Open: http://localhost:8000"
+
+dev-check: ## Check development environment
+	@echo "🔍 Checking development environment..."
+	python --version
+	pip --version
+	@python -c "import main; print('✅ Application imports successfully')"
+	@echo "✅ Development environment is ready"
+
+# Production Deployment
+prod-check: ## Check production readiness
+	@echo "🏭 Checking production readiness..."
+	$(MAKE) check
+	$(MAKE) test
+	@echo "✅ Production checks complete"
+
+prod-deploy: ## Full production deployment
+	@echo "🚀 Starting production deployment..."
+	$(MAKE) prod-check
+	$(MAKE) deploy-railway
+	@echo "✅ Production deployment complete"
+
+# Emergency Commands
+emergency-stop: ## Emergency stop all services
+	@echo "🚨 Emergency stop..."
+	pkill -f "python main.py" || true
+	docker-compose down || true
+	@echo "🛑 All services stopped"
+
+emergency-logs: ## Get emergency diagnostic information
+	@echo "🚨 Gathering emergency diagnostic information..."
+	@echo "=== System Info ==="
+	uname -a
+	@echo "=== Python Info ==="
+	python --version
+	@echo "=== Process Info ==="
+	ps aux | grep python || true
+	@echo "=== Disk Space ==="
+	df -h
+	@echo "=== Memory ==="
+	free -h || vm_stat || true
+	@echo "=== Recent Logs ==="
+	tail -n 50 *.log 2>/dev/null || echo "No logs found"
+
+# Help for specific sections
+help-dev: ## Show development help
+	@echo "Development Commands:"
+	@echo "  make setup      - Complete setup process"
+	@echo "  make run        - Start development server"
+	@echo "  make test       - Run tests"
+	@echo "  make format     - Format code"
+	@echo "  make check      - Run all quality checks"
+
+help-deploy: ## Show deployment help
+	@echo "Deployment Commands:"
+	@echo "  make deploy-railway  - Deploy to Railway"
+	@echo "  make docker-build    - Build Docker image"
+	@echo "  make prod-deploy     - Full production deployment"
+
+help-docker: ## Show Docker help
+	@echo "Docker Commands:"
+	@echo "  make docker-build    - Build Docker image"
+	@echo "  make docker-run      - Run Docker container"
+	@echo "  make docker-dev      - Start development environment"
+	@echo "  make docker-stop     - Stop Docker services"

@@ -1,0 +1,65 @@
+[build]
+builder = "nixpacks"
+buildCommand = "pip install --upgrade pip && pip install -r requirements.txt"
+
+[deploy]
+startCommand = "python main.py"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "always"
+restartPolicyMaxRetries = 5
+
+[deploy.envs]
+PORT = { default = "8000" }
+ENVIRONMENT = { default = "production" }
+WORKERS = { default = "1" }
+
+# Build configuration for audio processing
+[build.nixpacksPlan]
+providers = ["python"]
+
+[build.nixpacksPlan.phases.setup]
+nixPkgs = [
+    "ffmpeg", 
+    "gstreamer", 
+    "gst-plugins-base", 
+    "gst-plugins-good",
+    "portaudio",
+    "pkg-config"
+]
+
+[build.nixpacksPlan.phases.install]
+cmd = "pip install --upgrade pip setuptools wheel && pip install -r requirements.txt"
+
+# Resource limits and scaling
+[deploy.replicas]
+min = 1
+max = 3
+
+[deploy.resources]
+# Optimized for real-time voice processing
+memory = "1GB"
+cpu = "1"
+
+# Environment variables that should be set in Railway dashboard
+[deploy.variables]
+GEMINI_API_KEY = ""
+SECRET_KEY = ""
+LOG_LEVEL = "INFO"
+MAX_CONNECTIONS_PER_IP = "10"
+ENABLE_CRISIS_DETECTION = "true"
+CORS_ORIGINS = "*"
+
+# Health check configuration
+[deploy.healthcheck]
+httpPath = "/health"
+intervalSeconds = 30
+timeoutSeconds = 10
+retries = 3
+
+# Networking configuration for WebRTC
+[deploy.networking]
+# Enable WebSocket support
+allowWebSockets = true
+# Enable UDP for WebRTC (if supported)
+enableUDP = true
