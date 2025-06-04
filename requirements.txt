@@ -1,38 +1,39 @@
 # Core FastAPI and server dependencies
-fastapi>=0.104.1,<0.110.0
-uvicorn[standard]>=0.24.0,<0.26.0
-hypercorn>=0.16.0,<0.17.0
+fastapi<0.110.0,>=0.104.1
+uvicorn<0.26.0,>=0.24.0
+hypercorn<0.17.0,>=0.16.0
 
 # Google Gemini AI SDK
 google-genai>=0.8.0
 google-cloud-aiplatform>=1.38.0
 
 # WebRTC and real-time communication
-fastrtc[vad]==0.0.20.rc2
-aiortc>=1.6.0,<2.0.0
+fastrtc[vad]
+aiortc<2.0.0,>=1.6.0
 
 # Audio processing and media handling
-numpy>=1.24.0,<2.0.0
-scipy>=1.11.0,<2.0.0
+numpy<2.0.0,>=1.24.0
+scipy<2.0.0,>=1.11.0
+av
 
 # Configuration and environment management
-python-dotenv>=1.0.0,<2.0.0
-pydantic>=2.4.0,<3.0.0
-pydantic-settings>=2.0.0,<3.0.0
+python-dotenv<2.0.0,>=1.0.0
+pydantic<3.0.0,>=2.4.0
+pydantic-settings<3.0.0,>=2.0.0
 
 # HTTP client and async support
-httpx>=0.25.0,<0.26.0
-aiofiles>=23.0.0,<24.0.0
+httpx<1.0.0,>=0.28.1
+aiofiles<24.0.0,>=23.0.0
 
 # CORS and middleware
 python-multipart>=0.0.6
 
 # WebSocket support
-websockets>=11.0.3,<12.0.0
+websockets<15.0dev,>=13.0
 
 # Database and data persistence (optional)
-sqlalchemy>=2.0.0,<3.0.0
-databases[postgresql]>=0.8.0,<0.9.0
+sqlalchemy>=1.4.42,<2.0.0
+databases<0.9.0,>=0.8.0
 
 # Security and authentication
 cryptography>=41.0.0,<42.0.0
@@ -51,8 +52,8 @@ flake8>=6.0.0,<7.0.0
 gunicorn>=21.2.0,<22.0.0
 
 # Additional audio codecs and processing
-pyaudio>=0.2.11  # For advanced audio handling
-librosa>=0.10.0  # For audio analysis (optional)
+# pyaudio>=0.2.11  # Uncomment if needed
+# librosa>=0.10.0  # Uncomment if needed
 
 # Cloud deployment helpers
 psutil>=5.9.0  # For system monitoring
