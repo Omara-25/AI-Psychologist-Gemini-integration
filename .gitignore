@@ -1,0 +1,295 @@
+# Environment variables and secrets
+.env
+.env.local
+.env.development
+.env.production
+.env.staging
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Audio and media files (temporary)
+*.wav
+*.mp3
+*.mp4
+*.avi
+*.mov
+temp_audio/
+recordings/
+
+# Logs
+logs/
+*.log
+log_*.txt
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Railway specific
+.railway/
+
+# Node.js (if using any frontend tools)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# API keys and credentials
+credentials.json
+service-account-key.json
+*.pem
+*.key
+*.crt
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+.temp/
+
+# SSL certificates
+ssl/
+certs/
+*.crt
+*.key
+*.pem
+
+# Documentation build
+docs/_build/
+docs/build/
+
+# Static files (if collected)
+static_collected/
+media/
+
+# Configuration files with sensitive data
+config.ini
+config.yaml
+secrets.yaml
+
+# WebRTC specific temporary files
+webrtc_logs/
+turn_logs/
+
+# AI model files (if downloaded locally)
+models/
+*.model
+*.pkl
+*.joblib
+
+# Performance and profiling
+.prof
+*.prof
+profiling/
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Terraform (if using Infrastructure as Code)
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Helm charts (if using Kubernetes)
+*.tgz
+charts/*/charts/
+charts/*/requirements.lock
+
+# Development tools
+.flake8
+.pylintrc
+.pre-commit-config.yaml
+
+# Cache directories
+.cache/
+cache/
+__pycache__/
+
+# Gemini specific cache
+.gemini_cache/
+gemini_sessions/
+
+# Railway deployment artifacts
+railway-deployment/
+deployment_logs/
+# Python virtual environment
+venv/
+# If you use a different name for your virtual environment, add that as well
+# myenv/
+
+# Byte-compiled files
+__pycache__/
+*.py[cod]
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Pytest cache
+.pytest_cache/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# Environment variables
+.env
+.env.local
+.env.*.local
