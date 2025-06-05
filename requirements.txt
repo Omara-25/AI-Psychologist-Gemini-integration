@@ -1,12 +1,12 @@
 # Core FastAPI and server dependencies
-fastapi<0.110.0,>=0.104.1
-uvicorn<0.26.0,>=0.24.0
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
 
 # Google Gemini AI SDK
 google-genai>=0.8.0
 
-# WebRTC and real-time communication - SPECIFIC VERSIONS
-fastrtc==0.6.0
+# WebRTC and real-time communication - FIXED VERSIONS
+fastrtc==0.0.26
 aiortc==1.6.0
 
 # Audio processing with specific versions
@@ -29,7 +29,7 @@ aiofiles>=23.0.0,<24.0.0
 python-multipart>=0.0.6
 
 # WebSocket support
-websockets>=13.0,<15.0dev
+websockets>=13.0,<15.0
 
 # Production server optimization
 gunicorn>=21.2.0,<22.0.0

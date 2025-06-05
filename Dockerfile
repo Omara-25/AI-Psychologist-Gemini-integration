@@ -24,12 +24,13 @@ RUN apt-get update && apt-get install -y \
     libavutil-dev \
     libswscale-dev \
     libswresample-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better Docker layer caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install Python dependencies with better error handling
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
