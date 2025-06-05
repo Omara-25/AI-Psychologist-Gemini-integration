@@ -78,7 +78,7 @@ def encode_audio(data: np.ndarray) -> str:
     """Encode Audio data to send to Gemini"""
     return base64.b64encode(data.tobytes()).decode("UTF-8")
 
-# Import FastRTC with better error handling
+# Import FastRTC with comprehensive error handling and logging
 try:
     from fastrtc import (
         AsyncStreamHandler,
@@ -87,9 +87,21 @@ try:
         wait_for_item,
     )
     FASTRTC_AVAILABLE = True
-    logger.info("FastRTC imported successfully")
+    logger.info("✅ FastRTC imported successfully")
+    
+    # Test critical components
+    try:
+        from fastrtc.tracks import EmitType, StreamHandler
+        logger.info("✅ FastRTC tracks module available")
+    except ImportError as tracks_error:
+        logger.warning(f"⚠️  FastRTC tracks module issue: {tracks_error}")
+        
 except ImportError as e:
-    logger.error(f"FastRTC import error: {e}")
+    logger.error(f"❌ FastRTC import error: {e}")
+    logger.error("This usually means:")
+    logger.error("1. aiortc version incompatibility")
+    logger.error("2. Missing system dependencies")
+    logger.error("3. Build compilation failed")
     FASTRTC_AVAILABLE = False
     
     # Create fallback classes
@@ -502,6 +514,55 @@ async def debug_info():
         "gemini_api_key_set": bool(settings.gemini_api_key),
         "fastrtc_available": FASTRTC_AVAILABLE,
         "files_in_directory": [f.name for f in current_dir.iterdir() if f.is_file()][:10]
+    }
+
+@app.get("/deployment-status")
+async def deployment_status():
+    """Comprehensive deployment status check"""
+    try:
+        import aiortc
+        aiortc_version = getattr(aiortc, '__version__', 'unknown')
+        aiortc_available = True
+    except ImportError as e:
+        aiortc_version = f"Import failed: {e}"
+        aiortc_available = False
+    
+    try:
+        import fastrtc
+        fastrtc_version = getattr(fastrtc, '__version__', 'unknown')
+        fastrtc_import_ok = True
+        
+        # Test components
+        try:
+            from fastrtc import AsyncStreamHandler, Stream
+            fastrtc_components_ok = True
+        except ImportError:
+            fastrtc_components_ok = False
+            
+    except ImportError as e:
+        fastrtc_version = f"Import failed: {e}"
+        fastrtc_import_ok = False
+        fastrtc_components_ok = False
+    
+    return {
+        "deployment_status": "deployed",
+        "fastrtc": {
+            "available": FASTRTC_AVAILABLE,
+            "version": fastrtc_version,
+            "import_ok": fastrtc_import_ok,
+            "components_ok": fastrtc_components_ok
+        },
+        "aiortc": {
+            "available": aiortc_available,
+            "version": aiortc_version
+        },
+        "voice_features": FASTRTC_AVAILABLE,
+        "text_features": True,
+        "recommendations": [
+            "Use text chat - always available",
+            "Voice chat - depends on FastRTC availability",
+            "Check /debug for detailed diagnostics"
+        ]
     }
 
 @app.get("/", response_class=HTMLResponse)
