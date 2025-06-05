@@ -5,9 +5,9 @@ uvicorn[standard]==0.24.0
 # Google Gemini AI SDK
 google-genai>=0.8.0
 
-# WebRTC and real-time communication - Use latest available version
-fastrtc>=0.0.24,<0.1.0
-aiortc==1.6.0
+# WebRTC and real-time communication - FIXED COMPATIBLE VERSIONS
+aiortc==1.5.0
+fastrtc==0.0.24
 
 # Audio processing with specific versions
 numpy==1.26.4

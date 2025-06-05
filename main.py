@@ -13,12 +13,6 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Requ
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from fastrtc import (
-    AsyncStreamHandler,
-    Stream,
-    get_cloudflare_turn_credentials_async,
-    wait_for_item,
-)
 from google import genai
 from google.genai.types import (
     LiveConnectConfig,
@@ -84,6 +78,76 @@ def encode_audio(data: np.ndarray) -> str:
     """Encode Audio data to send to Gemini"""
     return base64.b64encode(data.tobytes()).decode("UTF-8")
 
+# Import FastRTC with better error handling
+try:
+    from fastrtc import (
+        AsyncStreamHandler,
+        Stream,
+        get_cloudflare_turn_credentials_async,
+        wait_for_item,
+    )
+    FASTRTC_AVAILABLE = True
+    logger.info("FastRTC imported successfully")
+except ImportError as e:
+    logger.error(f"FastRTC import error: {e}")
+    FASTRTC_AVAILABLE = False
+    
+    # Create fallback classes
+    class AsyncStreamHandler:
+        def __init__(self, expected_layout="mono", output_sample_rate=24000, input_sample_rate=16000):
+            self.expected_layout = expected_layout
+            self.output_sample_rate = output_sample_rate
+            self.input_sample_rate = input_sample_rate
+            self.phone_mode = False
+            self.latest_args = None
+            logger.warning("Using fallback AsyncStreamHandler")
+        
+        async def wait_for_args(self):
+            pass
+        
+        async def start_up(self):
+            pass
+        
+        async def receive(self, frame):
+            pass
+        
+        async def emit(self):
+            return None
+        
+        def shutdown(self):
+            pass
+        
+        def copy(self):
+            return AsyncStreamHandler(self.expected_layout, self.output_sample_rate)
+    
+    class Stream:
+        def __init__(self, *args, **kwargs):
+            logger.warning("Using fallback Stream implementation")
+        
+        def mount(self, app):
+            # Add fallback WebRTC endpoints
+            @app.post("/webrtc/offer")
+            async def webrtc_offer_fallback(request: Request):
+                body = await request.json()
+                return {
+                    "status": "failed",
+                    "meta": {
+                        "error": "webrtc_not_available",
+                        "message": "WebRTC features are not available in this deployment"
+                    }
+                }
+        
+        def set_input(self, webrtc_id, voice_name):
+            logger.warning(f"Stream.set_input() called but WebRTC not available")
+    
+    async def get_cloudflare_turn_credentials_async():
+        return {
+            "iceServers": [
+                {"urls": "stun:stun.l.google.com:19302"},
+                {"urls": "stun:stun1.l.google.com:19302"}
+            ]
+        }
+
 class GeminiHandler(AsyncStreamHandler):
     """Enhanced handler for Gemini API with therapeutic context and better error handling"""
 
@@ -110,6 +174,10 @@ class GeminiHandler(AsyncStreamHandler):
         )
 
     async def start_up(self):
+        if not FASTRTC_AVAILABLE:
+            logger.warning("FastRTC not available, skipping voice handler setup")
+            return
+            
         try:
             # Set default voice
             voice_name = "Aoede"
@@ -139,17 +207,16 @@ class GeminiHandler(AsyncStreamHandler):
                 else:
                     self.client = genai.Client(
                         api_key=settings.gemini_api_key,
-                        # Remove problematic http_options for Live API
                     )
                 logger.info("Gemini client initialized successfully")
             except Exception as client_error:
                 logger.error(f"Failed to initialize Gemini client: {client_error}")
                 return
 
-            # Simplified LiveConnectConfig - remove problematic fields
+            # Simplified LiveConnectConfig
             try:
                 config = LiveConnectConfig(
-                    response_modalities=["AUDIO"],  # Start with audio only
+                    response_modalities=["AUDIO"],
                     speech_config=SpeechConfig(
                         voice_config=VoiceConfig(
                             prebuilt_voice_config=PrebuiltVoiceConfig(
@@ -157,10 +224,9 @@ class GeminiHandler(AsyncStreamHandler):
                             )
                         )
                     ),
-                    # Try without system_instruction first to see if that's the issue
                     generation_config={
                         "temperature": 0.8,
-                        "max_output_tokens": 256,  # Reduced for voice
+                        "max_output_tokens": 256,
                     }
                 )
                 logger.info(f"LiveConnectConfig created with voice: {voice_name}")
@@ -211,13 +277,11 @@ class GeminiHandler(AsyncStreamHandler):
 
             except Exception as session_error:
                 logger.error(f"Gemini Live session error: {session_error}")
-                # If live session fails, fall back to text-only mode
                 logger.info("Live session failed, handler will operate in degraded mode")
 
         except Exception as e:
             logger.error(f"Error in GeminiHandler start_up: {e}")
             logger.info("Handler startup failed, will operate in degraded mode")
-            # Graceful degradation - continue without crashing
             await asyncio.sleep(1)
 
     async def stream(self) -> AsyncGenerator[bytes, None]:
@@ -289,14 +353,23 @@ class GeminiHandler(AsyncStreamHandler):
                 break
 
 # Enhanced Stream configuration with better error handling
-stream = Stream(
-    modality="audio",
-    mode="send-receive",
-    handler=GeminiHandler(),
-    rtc_configuration=get_cloudflare_turn_credentials_async,
-    concurrency_limit=5,  # Reduced from 10
-    time_limit=300,  # 5 minutes max per session
-)
+if FASTRTC_AVAILABLE:
+    try:
+        stream = Stream(
+            modality="audio",
+            mode="send-receive",
+            handler=GeminiHandler(),
+            rtc_configuration=get_cloudflare_turn_credentials_async,
+            concurrency_limit=5,
+            time_limit=300,
+        )
+        logger.info("FastRTC Stream initialized successfully")
+    except Exception as e:
+        logger.error(f"Error initializing FastRTC Stream: {e}")
+        stream = Stream()  # Fallback stream
+else:
+    stream = Stream()  # Fallback stream
+    logger.warning("Using fallback Stream implementation")
 
 # Request/Response models
 class ChatRequest(BaseModel):
@@ -336,12 +409,27 @@ else:
     logger.warning("Static directory not found, skipping static file mounting")
 
 # Mount FastRTC stream
-stream.mount(app)
+try:
+    stream.mount(app)
+    if FASTRTC_AVAILABLE:
+        logger.info("FastRTC stream mounted successfully")
+    else:
+        logger.info("Fallback stream mounted (WebRTC features limited)")
+except Exception as e:
+    logger.error(f"Error mounting stream: {e}")
 
 @app.post("/input_hook")
 async def set_input_hook(body: InputData):
     """Set input parameters for WebRTC stream with validation"""
     try:
+        if not FASTRTC_AVAILABLE:
+            return {
+                "status": "error",
+                "message": "WebRTC features are not available in this deployment",
+                "webrtc_id": body.webrtc_id,
+                "voice": body.voice_name
+            }
+        
         # Validate inputs
         if not body.webrtc_id or not body.voice_name:
             raise HTTPException(status_code=400, detail="Missing webrtc_id or voice_name")
@@ -376,7 +464,7 @@ async def chat_endpoint(request: ChatRequest):
                 api_key=settings.gemini_api_key,
             )
 
-        # FIX: Use correct method and parameters
+        # Generate response
         response = await client.aio.models.generate_content(
             model="gemini-2.0-flash-exp",
             contents=[
@@ -412,7 +500,8 @@ async def debug_info():
         "html_file_path": str(html_file),
         "static_dir_exists": static_dir.exists(),
         "gemini_api_key_set": bool(settings.gemini_api_key),
-        "files_in_directory": [f.name for f in current_dir.iterdir() if f.is_file()][:10]  # First 10 files
+        "fastrtc_available": FASTRTC_AVAILABLE,
+        "files_in_directory": [f.name for f in current_dir.iterdir() if f.is_file()][:10]
     }
 
 @app.get("/", response_class=HTMLResponse)
@@ -424,170 +513,429 @@ async def get_main_page():
         if not html_file.exists():
             logger.error(f"index.html not found at {html_file}")
             
-            # Return a simple working interface
+            # Return the embedded interface
             return HTMLResponse(content="""
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Psychologist - Text Chat</title>
+    <title>AI Psychologist - Voice & Text Chat</title>
     <style>
-        body { 
-            font-family: Arial, sans-serif; 
-            max-width: 800px; 
-            margin: 0 auto; 
-            padding: 20px; 
-            background: #1a1a2e;
-            color: #eee;
+        :root {
+            --color-accent: #6366f1;
+            --color-background: #0f172a;
+            --color-surface: #1e293b;
+            --color-text: #e2e8f0;
+            --color-success: #10b981;
+            --color-warning: #f59e0b;
+            --color-error: #ef4444;
         }
-        #chat { 
-            border: 1px solid #444; 
-            height: 400px; 
-            overflow-y: auto; 
-            padding: 10px; 
-            margin: 10px 0; 
-            background: #16213e;
-            border-radius: 8px;
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        #input { 
-            width: 70%; 
-            padding: 10px; 
-            background: #0f1419;
-            border: 1px solid #444;
-            color: #eee;
-            border-radius: 4px;
+
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, var(--color-background) 0%, #1e1b4b 100%);
+            color: var(--color-text);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
         }
-        #send { 
-            padding: 10px 20px; 
-            background: #7c3aed;
-            color: white;
+
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+            padding: 1rem;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6, #06b6d4);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .header .subtitle {
+            color: #94a3b8;
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+        }
+
+        .disclaimer {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        .container {
+            width: 90%;
+            max-width: 900px;
+            background: rgba(30, 41, 59, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .mode-selector {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 2rem;
+            background: rgba(15, 23, 42, 0.5);
+            border-radius: 0.75rem;
+            padding: 0.5rem;
+        }
+
+        .mode-btn {
+            flex: 1;
+            padding: 0.75rem 1.5rem;
             border: none;
-            border-radius: 4px;
+            background: transparent;
+            color: var(--color-text);
+            border-radius: 0.5rem;
             cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
         }
-        #send:hover { background: #6d28d9; }
-        .message { 
-            margin: 10px 0; 
-            padding: 10px; 
-            border-radius: 8px; 
+
+        .mode-btn.active {
+            background: var(--color-accent);
+            color: white;
         }
-        .user { 
-            background: #1e40af; 
-            text-align: right; 
-            margin-left: 20%;
+
+        .mode-btn:hover:not(.active) {
+            background: rgba(99, 102, 241, 0.2);
         }
-        .ai { 
-            background: #374151; 
-            margin-right: 20%;
+
+        .mode-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
-        .typing { 
-            background: #374151; 
-            margin-right: 20%;
-            font-style: italic;
-            opacity: 0.7;
+
+        .chat-container {
+            height: 60vh;
+            border-radius: 0.75rem;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(15, 23, 42, 0.5);
         }
-        .typing::after {
-            content: "...";
-            animation: dots 1.5s steps(5, end) infinite;
+
+        .messages {
+            height: calc(100% - 80px);
+            overflow-y: auto;
+            padding: 1rem;
         }
-        .ai::after {
-            content: none; /* Remove the dots when it becomes an AI message */
+
+        .message {
+            display: flex;
+            margin-bottom: 1rem;
+            animation: fadeIn 0.3s ease-in-out;
         }
-        @keyframes dots {
-            0%, 20% { color: rgba(0,0,0,0); text-shadow: .25em 0 0 rgba(0,0,0,0), .5em 0 0 rgba(0,0,0,0); }
-            40% { color: white; text-shadow: .25em 0 0 rgba(0,0,0,0), .5em 0 0 rgba(0,0,0,0); }
-            60% { text-shadow: .25em 0 0 white, .5em 0 0 rgba(0,0,0,0); }
-            80%, 100% { text-shadow: .25em 0 0 white, .5em 0 0 white; }
+
+        .user-message {
+            flex-direction: row-reverse;
         }
-        h1 { color: #7c3aed; text-align: center; }
+
+        .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 10px;
+            background: linear-gradient(135deg, var(--color-accent), #8b5cf6);
+            color: white;
+            font-size: 1.2rem;
+        }
+
+        .user-message .avatar {
+            background: linear-gradient(135deg, #06b6d4, #0891b2);
+        }
+
+        .bubble {
+            max-width: 70%;
+            padding: 12px 15px;
+            border-radius: 18px;
+            position: relative;
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .ai-message .bubble {
+            border-top-left-radius: 5px;
+        }
+
+        .user-message .bubble {
+            border-top-right-radius: 5px;
+            background: rgba(6, 182, 212, 0.2);
+            border-color: rgba(6, 182, 212, 0.3);
+        }
+
+        .bubble p {
+            margin: 0;
+            line-height: 1.5;
+        }
+
+        .input-area {
+            display: flex;
+            padding: 1rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(15, 23, 42, 0.8);
+        }
+
+        .text-input {
+            flex: 1;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 20px;
+            resize: none;
+            background: rgba(30, 41, 59, 0.8);
+            color: var(--color-text);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+            font-family: inherit;
+            font-size: 1rem;
+        }
+
+        .text-input:focus {
+            outline: none;
+            border-color: var(--color-accent);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .send-btn {
+            background: var(--color-accent);
+            border: none;
+            cursor: pointer;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            color: white;
+            margin-left: 0.75rem;
+        }
+
+        .send-btn:hover {
+            background-color: #5b21b6;
+            transform: scale(1.05);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .voice-notice {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+            text-align: center;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                width: 95%;
+                padding: 1.5rem;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .bubble {
+                max-width: 85%;
+            }
+
+            .chat-container {
+                height: 70vh;
+            }
+        }
     </style>
 </head>
 <body>
-    <h1>🧠 AI Psychologist - Text Chat</h1>
-    <div id="chat"></div>
-    <div>
-        <input type="text" id="input" placeholder="Type your message here..." />
-        <button id="send">Send</button>
+    <div class="header">
+        <h1>🧠 AI Psychologist</h1>
+        <p class="subtitle">Real-Time Voice & Text Therapeutic Support</p>
+        <div class="disclaimer">
+            <strong>⚠️ Important:</strong> This AI is not a substitute for professional mental health services. 
+            If you're experiencing a crisis, please contact emergency services or a mental health helpline immediately.
+        </div>
     </div>
-    
+
+    <div class="container">
+        <div class="mode-selector">
+            <button class="mode-btn" data-mode="voice" id="voice-btn">🎤 Voice Chat</button>
+            <button class="mode-btn active" data-mode="text">💬 Text Chat</button>
+        </div>
+
+        <div class="voice-notice" id="voice-notice" style="display: none;">
+            Voice features are being initialized. Please use text chat for now.
+        </div>
+
+        <div class="chat-container">
+            <div class="messages" id="messages">
+                <div class="message ai-message">
+                    <div class="avatar">🤖</div>
+                    <div class="bubble">
+                        <p>Hello! I'm your AI psychologist. I'm here to listen and support you. How are you feeling today?</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <textarea class="text-input" id="user-input" placeholder="Share your thoughts and feelings..." rows="1"></textarea>
+                <button class="send-btn" id="send-btn" title="Send">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script>
-        const chat = document.getElementById('chat');
-        const input = document.getElementById('input');
-        const send = document.getElementById('send');
-        let typingIndicator = null;
-        
-        const ws = new WebSocket(`ws://${window.location.host}/ws`);
-        
-        ws.onmessage = function(event) {
-            // Check if it's a typing indicator
-            if (event.data === 'typing') {
-                // Create typing indicator only if it doesn't exist
-                if (!typingIndicator) {
-                    typingIndicator = document.createElement('div');
-                    typingIndicator.className = 'message typing';
-                    typingIndicator.textContent = 'AI is thinking';
-                    chat.appendChild(typingIndicator);
-                    chat.scrollTop = chat.scrollHeight;
+        const messagesContainer = document.getElementById('messages');
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-btn');
+        const voiceBtn = document.getElementById('voice-btn');
+        const voiceNotice = document.getElementById('voice-notice');
+        let isProcessing = false;
+
+        // Check if voice features are available
+        fetch('/debug')
+            .then(response => response.json())
+            .then(data => {
+                if (data.fastrtc_available) {
+                    voiceBtn.disabled = false;
+                    voiceNotice.style.display = 'none';
+                } else {
+                    voiceBtn.disabled = true;
+                    voiceNotice.style.display = 'block';
+                    voiceNotice.textContent = 'Voice features are not available in this deployment. Text chat is fully functional.';
                 }
-                return;
+            })
+            .catch(() => {
+                voiceBtn.disabled = true;
+                voiceNotice.style.display = 'block';
+            });
+
+        // Auto-resize textarea
+        userInput.addEventListener('input', () => {
+            userInput.style.height = 'auto';
+            userInput.style.height = (userInput.scrollHeight) + 'px';
+        });
+
+        // Send message on Enter (without Shift)
+        userInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
             }
+        });
+
+        sendButton.addEventListener('click', sendMessage);
+
+        async function sendMessage() {
+            const message = userInput.value.trim();
+            if (!message || isProcessing) return;
+
+            isProcessing = true;
+            sendButton.disabled = true;
+
+            addMessageToChat(message, 'user');
+            userInput.value = '';
+            userInput.style.height = 'auto';
             
-            // Regular message - transform the existing typing indicator
-            if (typingIndicator) {
-                // Transform the existing typing bubble into AI response
-                typingIndicator.className = 'message ai';
-                typingIndicator.textContent = event.data;
+            // Add typing indicator
+            const typingMessage = addMessageToChat('Thinking...', 'ai');
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        prompt: message,
+                        temperature: 0.7,
+                        max_tokens: 512
+                    })
+                });
+
+                const data = await response.json();
                 
-                // Remove the CSS animation by clearing the ::after content
-                typingIndicator.style.fontStyle = 'normal';
-                typingIndicator.style.opacity = '1';
-                
-                typingIndicator = null; // Clear reference
-            } else {
-                // Fallback: create new message (shouldn't happen in normal flow)
-                const message = document.createElement('div');
-                message.className = 'message ai';
-                message.textContent = event.data;
-                chat.appendChild(message);
-            }
-            
-            chat.scrollTop = chat.scrollHeight;
-        };
-        
-        function sendMessage() {
-            const text = input.value.trim();
-            if (text) {
-                const message = document.createElement('div');
-                message.className = 'message user';
-                message.textContent = text;
-                chat.appendChild(message);
-                
-                ws.send(text);
-                input.value = '';
-                chat.scrollTop = chat.scrollHeight;
+                // Remove typing indicator and show response
+                typingMessage.remove();
+                addMessageToChat(data.response, 'ai');
+
+            } catch (error) {
+                console.error('Error:', error);
+                typingMessage.remove();
+                addMessageToChat('I apologize, but I encountered an error. Please try again.', 'ai');
+            } finally {
+                isProcessing = false;
+                sendButton.disabled = false;
             }
         }
-        
-        send.addEventListener('click', sendMessage);
-        input.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') sendMessage();
-        });
-        
-        // Connection status
-        ws.onopen = function() {
-            const message = document.createElement('div');
-            message.className = 'message ai';
-            message.textContent = 'Hello! I\\'m here to listen and support you. How are you feeling today?';
-            chat.appendChild(message);
-        };
-        
-        ws.onerror = function() {
-            const message = document.createElement('div');
-            message.className = 'message ai';
-            message.textContent = 'Connection error. Please refresh the page.';
-            chat.appendChild(message);
-        };
+
+        function addMessageToChat(text, sender) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}-message}`;
+            
+            const avatarDiv = document.createElement('div');
+            avatarDiv.className = 'avatar';
+            avatarDiv.textContent = sender === 'user' ? '👤' : '🤖';
+            
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = 'bubble';
+            
+            const paragraph = document.createElement('p');
+            paragraph.textContent = text;
+            bubbleDiv.appendChild(paragraph);
+            
+            messageDiv.appendChild(avatarDiv);
+            messageDiv.appendChild(bubbleDiv);
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            
+            return messageDiv;
+        }
     </script>
 </body>
 </html>
@@ -691,9 +1039,7 @@ async def websocket_text_chat(websocket: WebSocket):
                         api_key=settings.gemini_api_key,
                     )
 
-                # Don't send typing indicator - just generate response directly
-                
-                # Generate response (non-streaming since streaming isn't supported)
+                # Generate response
                 response = await client.aio.models.generate_content(
                     model="gemini-2.0-flash-exp",
                     contents=[
@@ -703,7 +1049,7 @@ async def websocket_text_chat(websocket: WebSocket):
 
                 # Send the complete response at once
                 if hasattr(response, 'text') and response.text:
-                    # Clean up the response text - remove voice-specific artifacts
+                    # Clean up the response text
                     clean_text = response.text
                     
                     # Remove common voice artifacts
@@ -738,18 +1084,18 @@ async def websocket_text_chat(websocket: WebSocket):
         try:
             await websocket.send_text(f"Connection error occurred: {str(e)}")
         except:
-            pass  # Connection likely already closed
+            pass
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint for Railway deployment"""
     try:
-        # Basic health check - could be expanded to check Gemini API connectivity
         return {
             "status": "healthy",
             "timestamp": datetime.utcnow().isoformat(),
             "service": "ai-psychologist-gemini",
-            "version": "2.0.0"
+            "version": "2.0.0",
+            "fastrtc_available": FASTRTC_AVAILABLE
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -780,7 +1126,7 @@ async def test_gemini():
             "status": "success",
             "response": response.text if hasattr(response, 'text') else str(response),
             "api_key_provided": bool(settings.gemini_api_key),
-            "api_key_length": len(settings.gemini_api_key) if settings.gemini_api_key else 0
+            "fastrtc_available": FASTRTC_AVAILABLE
         }
     except Exception as e:
         logger.error(f"Gemini test failed: {e}")
@@ -788,121 +1134,7 @@ async def test_gemini():
             "status": "error", 
             "error": str(e),
             "api_key_provided": bool(settings.gemini_api_key),
-            "api_key_length": len(settings.gemini_api_key) if settings.gemini_api_key else 0,
-            "troubleshooting": {
-                "check_api_key": "Make sure GEMINI_API_KEY is set in your .env file",
-                "verify_key": "Visit https://aistudio.google.com/apikey to get/verify your API key",
-                "model_access": "Ensure you have access to gemini-2.0-flash-exp model"
-            }
-        }
-
-@app.get("/test-streaming")
-async def test_streaming():
-    """Test streaming response from Gemini"""
-    try:
-        if settings.use_vertex_ai and settings.google_cloud_project:
-            client = genai.Client(
-                vertexai=True,
-                project=settings.google_cloud_project,
-                location='us-central1'
-            )
-        else:
-            client = genai.Client(
-                api_key=settings.gemini_api_key,
-            )
-
-        # Test the correct way to do streaming with the new SDK
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.0-flash-exp",
-                contents=[{"parts": [{"text": "Say hello and introduce yourself as an AI psychologist"}]}],
-                stream=True  # This is the correct way for the new SDK
-            )
-            
-            result = ""
-            for chunk in response:
-                if hasattr(chunk, 'text') and chunk.text:
-                    result += chunk.text
-            
-            return {
-                "status": "streaming_success",
-                "response": result,
-                "method": "streaming"
-            }
-        except Exception as stream_error:
-            # Fallback to non-streaming
-            response = await client.aio.models.generate_content(
-                model="gemini-2.0-flash-exp",
-                contents=[{"parts": [{"text": "Say hello"}]}],
-            )
-            
-            return {
-                "status": "non_streaming_success", 
-                "response": response.text if hasattr(response, 'text') else str(response),
-                "method": "non-streaming",
-                "stream_error": str(stream_error)
-            }
-
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-async def test_gemini_live():
-    """Test Gemini Live API specifically"""
-    try:
-        if settings.use_vertex_ai and settings.google_cloud_project:
-            client = genai.Client(
-                vertexai=True,
-                project=settings.google_cloud_project,
-                location='us-central1'
-            )
-        else:
-            client = genai.Client(
-                api_key=settings.gemini_api_key,
-            )
-
-        # Test Live API configuration
-        config = LiveConnectConfig(
-            response_modalities=["AUDIO"],
-            speech_config=SpeechConfig(
-                voice_config=VoiceConfig(
-                    prebuilt_voice_config=PrebuiltVoiceConfig(
-                        voice_name="Aoede",
-                    )
-                )
-            ),
-            generation_config={
-                "temperature": 0.8,
-                "max_output_tokens": 128,
-            }
-        )
-
-        # Try to establish a Live connection
-        try:
-            async with client.aio.live.connect(
-                model="gemini-2.0-flash-exp", 
-                config=config
-            ) as session:
-                return {
-                    "status": "success",
-                    "message": "Gemini Live API connection successful",
-                    "voice": "Aoede"
-                }
-        except Exception as live_error:
-            return {
-                "status": "live_api_error",
-                "error": str(live_error),
-                "suggestion": "Live API might not be available for your API key. Try the regular /test endpoint first."
-            }
-
-    except Exception as e:
-        logger.error(f"Gemini Live test failed: {e}")
-        return {
-            "status": "error", 
-            "error": str(e),
-            "troubleshooting": {
-                "check_access": "Gemini Live API might require special access",
-                "try_regular": "Try /test endpoint to verify basic API access first",
-                "contact_google": "Contact Google for Live API access if needed"
-            }
+            "fastrtc_available": FASTRTC_AVAILABLE
         }
 
 @app.get("/api/voices")
@@ -915,7 +1147,8 @@ async def get_available_voices():
             {"id": "Kore", "name": "Kore", "description": "Gentle, empathetic voice"},
             {"id": "Fenrir", "name": "Fenrir", "description": "Strong, supportive voice"},
             {"id": "Aoede", "name": "Aoede", "description": "Melodic, soothing voice (recommended)"},
-        ]
+        ],
+        "fastrtc_available": FASTRTC_AVAILABLE
     }
 
 # Error handlers

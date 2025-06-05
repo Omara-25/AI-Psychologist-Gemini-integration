@@ -30,15 +30,17 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements first for better Docker layer caching
 COPY requirements.txt .
 
-# Install Python dependencies with better error handling
+# Install Python dependencies in specific order to avoid conflicts
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir fastapi==0.104.1 uvicorn[standard]==0.24.0 && \
     pip install --no-cache-dir google-genai>=0.8.0 && \
     pip install --no-cache-dir numpy==1.26.4 scipy==1.11.4 && \
     pip install --no-cache-dir python-dotenv pydantic pydantic-settings && \
     pip install --no-cache-dir httpx aiofiles python-multipart websockets && \
-    pip install --no-cache-dir gunicorn psutil av==10.0.0 && \
-    (pip install --no-cache-dir fastrtc>=0.0.24 aiortc==1.6.0 || echo "Warning: FastRTC installation failed, voice features will be limited")
+    pip install --no-cache-dir gunicorn psutil && \
+    pip install --no-cache-dir av==10.0.0 && \
+    pip install --no-cache-dir aiortc==1.5.0 && \
+    pip install --no-cache-dir fastrtc==0.0.24
 
 # Copy application code
 COPY . .
