@@ -9,19 +9,7 @@ nixPkgs = [
     "python311Packages.wheel",
     "pkg-config",
     "libffi",
-    "openssl",
-    "ffmpeg",
-    "alsa-lib",
-    "pulseaudio",
-    "portaudio",
-    "libsndfile",
-    "libsamplerate",
-    "gstreamer",
-    "gst-plugins-base",
-    "gst-plugins-good",
-    "gst-plugins-bad",
-    "gst-plugins-ugly",
-    "gst-libav"
+    "openssl"
 ]
 
 [phases.install]
