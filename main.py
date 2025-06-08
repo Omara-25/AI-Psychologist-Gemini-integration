@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator
 from typing import Dict, Any, Optional, List, Literal
 import logging
 from datetime import datetime
+import sys
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
@@ -78,33 +79,38 @@ def encode_audio(data: np.ndarray) -> str:
     """Encode Audio data to send to Gemini"""
     return base64.b64encode(data.tobytes()).decode("UTF-8")
 
-# Import FastRTC with comprehensive error handling and logging
+# Import FastRTC with comprehensive error handling and version compatibility
+FASTRTC_AVAILABLE = False
+FASTRTC_ERROR = None
+
 try:
+    # First test if aiortc has the required components
+    from aiortc import AudioStreamTrack, VideoStreamTrack, RTCPeerConnection
+    logger.info("✅ aiortc components available")
+    
+    # Then try to import FastRTC
     from fastrtc import (
         AsyncStreamHandler,
         Stream,
         get_cloudflare_turn_credentials_async,
         wait_for_item,
     )
+    
+    # Test FastRTC components
+    from fastrtc.tracks import EmitType, StreamHandler
+    
     FASTRTC_AVAILABLE = True
-    logger.info("✅ FastRTC imported successfully")
+    logger.info("✅ FastRTC imported successfully with all components")
     
-    # Test critical components
-    try:
-        from fastrtc.tracks import EmitType, StreamHandler
-        logger.info("✅ FastRTC tracks module available")
-    except ImportError as tracks_error:
-        logger.warning(f"⚠️  FastRTC tracks module issue: {tracks_error}")
-        
 except ImportError as e:
-    logger.error(f"❌ FastRTC import error: {e}")
-    logger.error("This usually means:")
-    logger.error("1. aiortc version incompatibility")
-    logger.error("2. Missing system dependencies")
-    logger.error("3. Build compilation failed")
-    FASTRTC_AVAILABLE = False
+    FASTRTC_ERROR = str(e)
+    logger.error(f"❌ FastRTC/aiortc compatibility issue: {e}")
     
-    # Create fallback classes
+    if "AudioStreamTrack" in str(e):
+        logger.error("🔧 This is a known aiortc version compatibility issue")
+        logger.error("💡 Try: aiortc==1.6.0 or use text-only mode")
+    
+    # Create comprehensive fallback classes
     class AsyncStreamHandler:
         def __init__(self, expected_layout="mono", output_sample_rate=24000, input_sample_rate=16000):
             self.expected_layout = expected_layout
@@ -118,7 +124,7 @@ except ImportError as e:
             pass
         
         async def start_up(self):
-            pass
+            logger.info("Fallback handler startup - voice features disabled")
         
         async def receive(self, frame):
             pass
@@ -135,9 +141,10 @@ except ImportError as e:
     class Stream:
         def __init__(self, *args, **kwargs):
             logger.warning("Using fallback Stream implementation")
+            logger.info("Voice features are disabled - text chat fully functional")
         
         def mount(self, app):
-            # Add fallback WebRTC endpoints
+            # Add fallback WebRTC endpoints that return proper error messages
             @app.post("/webrtc/offer")
             async def webrtc_offer_fallback(request: Request):
                 body = await request.json()
@@ -145,20 +152,35 @@ except ImportError as e:
                     "status": "failed",
                     "meta": {
                         "error": "webrtc_not_available",
-                        "message": "WebRTC features are not available in this deployment"
+                        "message": f"WebRTC features are not available: {FASTRTC_ERROR}",
+                        "suggestion": "Use text chat mode instead"
                     }
+                }
+            
+            @app.get("/webrtc/status")
+            async def webrtc_status():
+                return {
+                    "available": False,
+                    "error": FASTRTC_ERROR,
+                    "text_chat_available": True
                 }
         
         def set_input(self, webrtc_id, voice_name):
-            logger.warning(f"Stream.set_input() called but WebRTC not available")
+            logger.warning(f"Stream.set_input() called but WebRTC not available: {FASTRTC_ERROR}")
     
     async def get_cloudflare_turn_credentials_async():
         return {
             "iceServers": [
                 {"urls": "stun:stun.l.google.com:19302"},
+                {"urls": "stun:stun.l.google.com:19302"},
                 {"urls": "stun:stun1.l.google.com:19302"}
             ]
         }
+
+except Exception as e:
+    FASTRTC_ERROR = f"Unexpected error: {str(e)}"
+    logger.error(f"❌ Unexpected FastRTC error: {e}")
+    FASTRTC_AVAILABLE = False
 
 class GeminiHandler(AsyncStreamHandler):
     """Enhanced handler for Gemini API with therapeutic context and better error handling"""
@@ -513,7 +535,14 @@ async def debug_info():
         "static_dir_exists": static_dir.exists(),
         "gemini_api_key_set": bool(settings.gemini_api_key),
         "fastrtc_available": FASTRTC_AVAILABLE,
-        "files_in_directory": [f.name for f in current_dir.iterdir() if f.is_file()][:10]
+        "fastrtc_error": FASTRTC_ERROR,
+        "files_in_directory": [f.name for f in current_dir.iterdir() if f.is_file()][:10],
+        "python_version": sys.version,
+        "recommendations": [
+            "Text chat is always available",
+            "Voice chat requires FastRTC compatibility",
+            f"Current issue: {FASTRTC_ERROR}" if FASTRTC_ERROR else "No issues detected"
+        ]
     }
 
 @app.get("/deployment-status")

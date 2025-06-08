@@ -46,8 +46,8 @@ This document provides a comprehensive deployment plan for integrating Google Ge
 #### 1.1 Clone and Configure
 ```bash
 # Clone your repository
-git clone https://github.com/yourusername/ai-psychologist-gemini.git
-cd ai-psychologist-gemini
+git clone https://github.com/Omara-25/AI-Psychologist-Gemini-integration.git
+cd AI-Psychologist-Gemini-integration
 
 # Create virtual environment
 python -m venv venv

@@ -51,11 +51,8 @@ This project aims to create a revolutionary therapeutic AI assistant that combin
 ```bash
 # Fork the repository on GitHub
 # Clone your fork
-git clone https://github.com/yourusername/ai-psychologist-gemini.git
-cd ai-psychologist-gemini
-
-# Run the setup script
-python setup.py
+git clone https://github.com/Omara-25/AI-Psychologist-Gemini-integration.git
+cd AI-Psychologist-Gemini-integration
 
 # Or manual setup:
 python -m venv venv
@@ -70,15 +67,6 @@ cp .env.example .env
 ```bash
 # Create a feature branch
 git checkout -b feature/your-feature-name
-
-# Make your changes
-# Add tests for new functionality
-# Update documentation as needed
-
-# Run tests
-python run_tests.py
-# or
-pytest test_main.py -v
 
 # Run the development server
 python run_dev.py
