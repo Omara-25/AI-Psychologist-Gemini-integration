@@ -395,6 +395,39 @@
             animation: pulse 1.5s infinite;
         }
 
+        /* Footer Styles */
+        .footer {
+            width: 100%;
+            background: rgba(15, 23, 42, 0.95);
+            -webkit-backdrop-filter: blur(10px);
+            backdrop-filter: blur(10px);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 1.5rem;
+            text-align: center;
+            margin-top: 3rem;
+        }
+
+        .footer-content {
+            font-size: 0.9rem;
+            color: #94a3b8;
+        }
+
+        .footer-link {
+            color: var(--color-accent);
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .footer-link:hover {
+            text-decoration: underline;
+            transform: translateY(-1px);
+        }
+
         /* Toast Notifications */
         .toast {
             position: fixed;
@@ -502,6 +535,14 @@
                 min-width: 180px;
                 font-size: 1rem;
             }
+
+            .footer {
+                padding: 1.25rem;
+            }
+
+            .footer-content {
+                font-size: 0.8rem;
+            }
         }
 
         @media (max-width: 480px) {
@@ -522,6 +563,11 @@
                 justify-content: center;
                 margin-left: 0;
             }
+
+            .footer-content {
+                font-size: 0.75rem;
+                line-height: 1.4;
+            }
         }
     </style>
 </head>
@@ -533,7 +579,7 @@
     <!-- Header -->
     <div class="header">
         <h1>🧠 AI Psychologist</h1>
-        <p class="subtitle">Powered by Critical Future Real-Time AI Psychologist </p>
+        <p class="subtitle">A safe space to talk about your feelings </p>
         <div class="disclaimer">
             <strong>⚠️ Important:</strong> This AI is not a substitute for professional mental health services. 
             If you're experiencing a crisis, please contact emergency services or a mental health helpline immediately.
@@ -605,6 +651,13 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        <div class="footer-content">
+            Real-Time AI Psychologist Powered by <a href="https://criticalfutureglobal.com/" target="_blank" rel="noopener noreferrer" class="footer-link">Critical Future</a>
         </div>
     </div>
 
