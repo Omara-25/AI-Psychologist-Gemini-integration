@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Psychologist - Gemini Voice</title>
+    <title>AI Psychologist - Voice, Video & Text</title>
     <style>
         :root {
             --color-accent: #6366f1;
@@ -70,7 +70,7 @@
 
         .container {
             width: 90%;
-            max-width: 900px;
+            max-width: 1200px;
             background: rgba(30, 41, 59, 0.95);
             -webkit-backdrop-filter: blur(10px);
             backdrop-filter: blur(10px);
@@ -184,6 +184,182 @@
             margin: 0 1px;
         }
 
+        /* Video Mode Styles */
+        .video-section {
+            display: none;
+        }
+
+        .video-section.active {
+            display: block;
+        }
+
+        .video-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin: 2rem 0;
+            height: 400px;
+        }
+
+        .video-panel {
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .video-element {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 1rem;
+        }
+
+        .video-label {
+            position: absolute;
+            top: 10px;
+            left: 15px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            z-index: 10;
+        }
+
+        .video-status {
+            position: absolute;
+            bottom: 10px;
+            right: 15px;
+            background: rgba(16, 185, 129, 0.9);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            z-index: 10;
+        }
+
+        .file-upload-panel {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .upload-zone {
+            border: 2px dashed rgba(99, 102, 241, 0.3);
+            border-radius: 1rem;
+            padding: 2rem;
+            background: rgba(99, 102, 241, 0.05);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            min-height: 200px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .upload-zone:hover {
+            border-color: var(--color-accent);
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .upload-zone.dragover {
+            border-color: var(--color-accent);
+            background: rgba(99, 102, 241, 0.15);
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.6;
+        }
+
+        .upload-text {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .upload-subtext {
+            font-size: 0.9rem;
+            opacity: 0.7;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .uploaded-files {
+            margin-top: 1rem;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .uploaded-file {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 0.5rem;
+            padding: 0.5rem 1rem;
+            margin: 0.5rem 0;
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            font-size: 0.9rem;
+        }
+
+        .file-remove {
+            background: none;
+            border: none;
+            color: var(--color-error);
+            cursor: pointer;
+            margin-left: auto;
+            padding: 0.25rem;
+        }
+
+        .video-controls {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin-top: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .video-btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.75rem;
+            border: none;
+            background: linear-gradient(135deg, var(--color-accent), #8b5cf6);
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            min-width: 150px;
+        }
+
+        .video-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(99, 102, 241, 0.3);
+        }
+
+        .video-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .video-btn.danger {
+            background: linear-gradient(135deg, var(--color-error), #dc2626);
+        }
+
         .voice-button {
             padding: 1rem 2rem;
             border-radius: 0.75rem;
@@ -202,7 +378,7 @@
             font-size: 1.1rem;
         }
 
-        .voice-button:hover {
+        .voice-button:hover:not(:disabled) {
             transform: translateY(-2px);
             box-shadow: 0 10px 25px rgba(99, 102, 241, 0.3);
         }
@@ -211,6 +387,10 @@
             opacity: 0.6;
             cursor: not-allowed;
             transform: none;
+        }
+
+        .voice-button.danger {
+            background: linear-gradient(135deg, var(--color-error), #dc2626);
         }
 
         .spinner {
@@ -531,9 +711,19 @@
                 height: 60vh;
             }
 
-            .voice-button {
-                min-width: 180px;
-                font-size: 1rem;
+            .voice-button, .video-btn {
+                min-width: 140px;
+                font-size: 0.9rem;
+            }
+
+            .video-container {
+                grid-template-columns: 1fr;
+                height: 300px;
+            }
+
+            .video-controls {
+                flex-direction: column;
+                align-items: center;
             }
 
             .footer {
@@ -579,7 +769,7 @@
     <!-- Header -->
     <div class="header">
         <h1>🧠 AI Psychologist</h1>
-        <p class="subtitle">A safe space to talk about your feelings </p>
+        <p class="subtitle">Voice, Video & Text Therapeutic Support</p>
         <div class="disclaimer">
             <strong>⚠️ Important:</strong> This AI is not a substitute for professional mental health services. 
             If you're experiencing a crisis, please contact emergency services or a mental health helpline immediately.
@@ -590,12 +780,13 @@
     <div class="container">
         <!-- Mode Selector -->
         <div class="mode-selector">
-            <button class="mode-btn active" data-mode="voice">🎤 Voice Chat</button>
-            <button class="mode-btn" data-mode="text">💬 Text Chat</button>
+            <button class="mode-btn" data-mode="voice">🎤 Voice Chat</button>
+            <button class="mode-btn" data-mode="video">📹 Video Chat</button>
+            <button class="mode-btn active" data-mode="text">💬 Text Chat</button>
         </div>
 
         <!-- Voice Mode -->
-        <div class="voice-section active">
+        <div class="voice-section">
             <div class="controls">
                 <div class="input-group">
                     <label for="voice">Therapeutic Voice</label>
@@ -620,14 +811,62 @@
             </button>
         </div>
 
+        <!-- Video Mode -->
+        <div class="video-section">
+            <div class="controls">
+                <div class="input-group">
+                    <label for="video-voice">Therapeutic Voice for Video</label>
+                    <select id="video-voice">
+                        <option value="Aoede">Aoede (Recommended - Melodic & Soothing)</option>
+                        <option value="Kore">Kore (Gentle & Empathetic)</option>
+                        <option value="Charon">Charon (Calm & Reassuring)</option>
+                        <option value="Puck">Puck (Warm & Conversational)</option>
+                        <option value="Fenrir">Fenrir (Strong & Supportive)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="video-container">
+                <div class="video-panel">
+                    <div class="video-label">Your Video</div>
+                    <video id="local-video" class="video-element" autoplay muted playsinline></video>
+                    <div class="video-status" id="local-status">Camera Ready</div>
+                </div>
+                <div class="video-panel">
+                    <div class="video-label">📁 Share Files with AI</div>
+                    <div class="file-upload-panel">
+                        <div class="upload-zone" id="upload-zone">
+                            <div class="upload-icon">📄</div>
+                            <div class="upload-text">Click or drag files here</div>
+                            <div class="upload-subtext">Share documents, images, or any files with your AI psychologist</div>
+                        </div>
+                        <input type="file" id="file-input" class="file-input" multiple accept="*/*">
+                        <div class="uploaded-files" id="uploaded-files"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="video-controls">
+                <button id="start-video-button" class="video-btn">
+                    📹 Start Video Session
+                </button>
+                <button id="toggle-camera" class="video-btn" style="display: none;">
+                    📷 Toggle Camera
+                </button>
+                <button id="toggle-mic" class="video-btn" style="display: none;">
+                    🎤 Toggle Mic
+                </button>
+            </div>
+        </div>
+
         <!-- Text Mode -->
-        <div class="text-section">
+        <div class="text-section active">
             <div class="chat-container">
                 <div class="messages" id="messages">
                     <div class="message ai-message">
                         <div class="avatar">🤖</div>
                         <div class="bubble">
-                            <p>Hello! I'm your AI psychologist. I'm here to listen and support you. How are you feeling today? You can type your thoughts or use the microphone button to speak.</p>
+                            <p>Hello! I'm your AI psychologist created by Critical Future. I'm here to listen and support you. How are you feeling today? You can type your thoughts, use voice, or even video chat with me!</p>
                         </div>
                     </div>
                 </div>
@@ -657,7 +896,7 @@
     <!-- Footer -->
     <div class="footer">
         <div class="footer-content">
-            Real-Time AI Psychologist Powered by <a href="https://criticalfutureglobal.com/" target="_blank" rel="noopener noreferrer" class="footer-link">Critical Future</a>
+            AI Psychologist Powered by <a href="https://criticalfuture.com/" target="_blank" rel="noopener noreferrer" class="footer-link">Critical Future</a>
         </div>
     </div>
 
@@ -672,21 +911,34 @@
     <script>
         // Global variables
         let peerConnection;
+        let videoPeerConnection;
         let audioContext;
         let dataChannel;
+        let videoDataChannel;
         let isRecording = false;
+        let isVideoRecording = false;
         let webrtc_id;
+        let video_webrtc_id;
         let isMuted = false;
+        let isCameraOn = true;
         let analyser_input, dataArray_input;
         let analyser, dataArray;
         let source_input = null;
         let source_output = null;
-        let currentMode = 'voice';
+        let currentMode = 'text';
+        let localStream = null;
+        let uploadedFiles = [];
 
         // DOM Elements
         const startButton = document.getElementById('start-button');
+        const startVideoButton = document.getElementById('start-video-button');
+        const toggleCameraBtn = document.getElementById('toggle-camera');
+        const toggleMicBtn = document.getElementById('toggle-mic');
         const voiceSelect = document.getElementById('voice');
+        const videoVoiceSelect = document.getElementById('video-voice');
         const audioOutput = document.getElementById('audio-output');
+        const localVideo = document.getElementById('local-video');
+        const localStatus = document.getElementById('local-status');
         const boxContainer = document.querySelector('.box-container');
         const messagesContainer = document.getElementById('messages');
         const userInput = document.getElementById('user-input');
@@ -694,10 +946,14 @@
         const micButton = document.getElementById('mic-btn');
         const statusIndicator = document.getElementById('status');
         const statusText = document.getElementById('status-text');
+        const uploadZone = document.getElementById('upload-zone');
+        const fileInput = document.getElementById('file-input');
+        const uploadedFilesContainer = document.getElementById('uploaded-files');
 
         // Mode switching
         const modeButtons = document.querySelectorAll('.mode-btn');
         const voiceSection = document.querySelector('.voice-section');
+        const videoSection = document.querySelector('.video-section');
         const textSection = document.querySelector('.text-section');
 
         modeButtons.forEach(btn => {
@@ -714,14 +970,91 @@
                 btn.classList.toggle('active', btn.dataset.mode === mode);
             });
 
+            // Hide all sections
+            voiceSection.classList.remove('active');
+            videoSection.classList.remove('active');
+            textSection.classList.remove('active');
+
+            // Show selected section
             if (mode === 'voice') {
                 voiceSection.classList.add('active');
-                textSection.classList.remove('active');
+            } else if (mode === 'video') {
+                videoSection.classList.add('active');
+                initializeVideoMode();
             } else {
-                voiceSection.classList.remove('active');
                 textSection.classList.add('active');
                 initializeTextMode();
             }
+        }
+
+        // File upload functionality
+        uploadZone.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            handleFiles(files);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            const files = e.target.files;
+            handleFiles(files);
+        });
+
+        async function handleFiles(files) {
+            for (let file of files) {
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    const response = await fetch('/upload_file', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        uploadedFiles.push(result.encoded_data);
+                        displayUploadedFile(result.filename, result.size);
+                        showToast(`File "${result.filename}" uploaded successfully!`, 'success');
+                    } else {
+                        throw new Error('Upload failed');
+                    }
+                } catch (error) {
+                    console.error('File upload error:', error);
+                    showToast(`Failed to upload "${file.name}"`, 'error');
+                }
+            }
+        }
+
+        function displayUploadedFile(filename, size) {
+            const fileDiv = document.createElement('div');
+            fileDiv.className = 'uploaded-file';
+            fileDiv.innerHTML = `
+                <span>📄 ${filename} (${Math.round(size / 1024)}KB)</span>
+                <button class="file-remove" onclick="removeFile(this, '${filename}')">×</button>
+            `;
+            uploadedFilesContainer.appendChild(fileDiv);
+        }
+
+        function removeFile(button, filename) {
+            // Remove from uploaded files array
+            uploadedFiles = uploadedFiles.filter(file => !file.data || file.filename !== filename);
+            // Remove from UI
+            button.parentElement.remove();
+            showToast(`Removed "${filename}"`, 'warning');
         }
 
         // Initialize audio visualization
@@ -751,15 +1084,13 @@
             </svg>`;
 
         function updateButtonState() {
-            startButton.innerHTML = '';
-            startButton.onclick = null;
-
             if (peerConnection && (peerConnection.connectionState === 'connecting' || peerConnection.connectionState === 'new')) {
                 startButton.innerHTML = `
                     <div class="spinner"></div>
-                    <span>Connecting to Gemini...</span>
+                    <span>Connecting to AI Psychologist...</span>
                 `;
                 startButton.disabled = true;
+                startButton.classList.remove('danger');
             } else if (peerConnection && peerConnection.connectionState === 'connected') {
                 const pulseContainer = document.createElement('div');
                 pulseContainer.className = 'pulse-container';
@@ -774,12 +1105,38 @@
                 muteToggle.innerHTML = isMuted ? micMutedIconSVG : micIconSVG;
                 muteToggle.addEventListener('click', toggleMute);
 
+                startButton.innerHTML = '';
                 startButton.appendChild(pulseContainer);
                 startButton.appendChild(muteToggle);
                 startButton.disabled = false;
+                startButton.classList.add('danger');
             } else {
                 startButton.innerHTML = '🎤 Start Voice Session';
                 startButton.disabled = false;
+                startButton.classList.remove('danger');
+            }
+        }
+
+        function updateVideoButtonState() {
+            if (videoPeerConnection && videoPeerConnection.connectionState === 'connected') {
+                startVideoButton.innerHTML = '🔴 End Video Session';
+                startVideoButton.classList.add('danger');
+                startVideoButton.disabled = false;
+                toggleCameraBtn.style.display = 'inline-flex';
+                toggleMicBtn.style.display = 'inline-flex';
+            } else if (videoPeerConnection && (videoPeerConnection.connectionState === 'connecting' || videoPeerConnection.connectionState === 'new')) {
+                startVideoButton.innerHTML = `
+                    <div class="spinner"></div>
+                    <span>Connecting...</span>
+                `;
+                startVideoButton.disabled = true;
+                startVideoButton.classList.remove('danger');
+            } else {
+                startVideoButton.innerHTML = '📹 Start Video Session';
+                startVideoButton.classList.remove('danger');
+                startVideoButton.disabled = false;
+                toggleCameraBtn.style.display = 'none';
+                toggleMicBtn.style.display = 'none';
             }
         }
 
@@ -820,6 +1177,7 @@
             updateButtonState();
         }
 
+        // Audio-only WebRTC setup
         async function setupWebRTC() {
             const config = __RTC_CONFIGURATION__;
             peerConnection = new RTCPeerConnection(config);
@@ -858,15 +1216,16 @@
                 updateAudioLevel();
 
                 peerConnection.addEventListener('connectionstatechange', () => {
-                    console.log('Connection state:', peerConnection.connectionState);
+                    console.log('Voice connection state:', peerConnection.connectionState);
                     if (peerConnection.connectionState === 'connected') {
                         clearTimeout(timeoutId);
-                        showToast('Connected to Gemini Voice AI!', 'success');
-                        showStatus('Voice session active');
+                        showToast('Connected to AI Psychologist Voice!', 'success');
+                        showStatus('Voice session active - say "bye" to end');
                         if (analyser_input) updateAudioLevel();
                         if (analyser) updateVisualization();
                     } else if (['disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
                         showStatus('Voice session ended');
+                        endSession();
                     }
                     updateButtonState();
                 });
@@ -874,7 +1233,7 @@
                 peerConnection.onicecandidate = ({ candidate }) => {
                     if (candidate) {
                         console.debug("Sending ICE candidate", candidate);
-                        fetch('/webrtc/offer', {
+                        fetch('/audio/webrtc/offer', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -925,7 +1284,8 @@
                             },
                             body: JSON.stringify({
                                 webrtc_id: webrtc_id,
-                                voice_name: voiceSelect.value
+                                voice_name: voiceSelect.value,
+                                mode: "audio"
                             })
                         });
                     }
@@ -934,7 +1294,7 @@
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
 
-                const response = await fetch('/webrtc/offer', {
+                const response = await fetch('/audio/webrtc/offer', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -959,9 +1319,126 @@
 
             } catch (err) {
                 clearTimeout(timeoutId);
-                console.error('Error setting up WebRTC:', err);
+                console.error('Error setting up Voice WebRTC:', err);
                 showToast('Failed to establish voice connection. Please check your microphone permissions and try again.', 'error');
                 stopWebRTC();
+            }
+        }
+
+        // Video WebRTC setup
+        async function setupVideoWebRTC() {
+            const config = __RTC_CONFIGURATION__;
+            videoPeerConnection = new RTCPeerConnection(config);
+            video_webrtc_id = Math.random().toString(36).substring(7);
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: {
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        facingMode: 'user'
+                    },
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: 16000
+                    } 
+                });
+                
+                localStream = stream;
+                localVideo.srcObject = stream;
+                
+                stream.getTracks().forEach(track => videoPeerConnection.addTrack(track, stream));
+
+                videoPeerConnection.addEventListener('connectionstatechange', () => {
+                    console.log('Video connection state:', videoPeerConnection.connectionState);
+                    if (videoPeerConnection.connectionState === 'connected') {
+                        showToast('Connected to AI Psychologist Video!', 'success');
+                        showStatus('Video session active - say "bye" to end');
+                        localStatus.textContent = 'Connected';
+                    } else if (['disconnected', 'failed', 'closed'].includes(videoPeerConnection.connectionState)) {
+                        showStatus('Video session ended');
+                        localStatus.textContent = 'Camera Ready';
+                        endVideoSession();
+                    }
+                    updateVideoButtonState();
+                });
+
+                videoPeerConnection.onicecandidate = ({ candidate }) => {
+                    if (candidate) {
+                        fetch('/video/webrtc/offer', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                candidate: candidate.toJSON(),
+                                webrtc_id: video_webrtc_id,
+                                type: "ice-candidate",
+                            })
+                        });
+                    }
+                };
+
+                // Audio from AI (no video from AI)
+                videoPeerConnection.addEventListener('track', (evt) => {
+                    if (evt.track.kind === 'audio') {
+                        const audioElement = new Audio();
+                        audioElement.srcObject = evt.streams[0];
+                        audioElement.play().catch(e => console.error("Video audio play failed:", e));
+                    }
+                });
+
+                videoDataChannel = videoPeerConnection.createDataChannel('control');
+                videoDataChannel.onmessage = (event) => {
+                    const eventJson = JSON.parse(event.data);
+                    if (eventJson.type === "error") {
+                        showToast(eventJson.message, 'error');
+                    } else if (eventJson.type === "send_input") {
+                        fetch('/input_hook', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                webrtc_id: video_webrtc_id,
+                                voice_name: videoVoiceSelect.value,
+                                mode: "video",
+                                uploaded_files: uploadedFiles
+                            })
+                        });
+                    }
+                };
+
+                const offer = await videoPeerConnection.createOffer();
+                await videoPeerConnection.setLocalDescription(offer);
+
+                const response = await fetch('/video/webrtc/offer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sdp: videoPeerConnection.localDescription.sdp,
+                        type: videoPeerConnection.localDescription.type,
+                        webrtc_id: video_webrtc_id,
+                    })
+                });
+
+                const serverResponse = await response.json();
+
+                if (serverResponse.status === 'failed') {
+                    const errorMsg = serverResponse.meta.error === 'concurrency_limit_reached'
+                        ? `Too many active video sessions. Please try again later.`
+                        : `Video connection failed: ${serverResponse.meta.error}`;
+                    showToast(errorMsg, 'error');
+                    stopVideoWebRTC();
+                    return;
+                }
+
+                await videoPeerConnection.setRemoteDescription(serverResponse);
+
+            } catch (err) {
+                console.error('Error setting up Video WebRTC:', err);
+                showToast('Failed to establish video connection. Please check your camera and microphone permissions.', 'error');
+                stopVideoWebRTC();
             }
         }
 
@@ -1004,8 +1481,22 @@
             requestAnimationFrame(updateAudioLevel);
         }
 
+        function endSession() {
+            fetch('/end_session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            }).catch(e => console.warn('Could not notify server of session end:', e));
+        }
+
+        function endVideoSession() {
+            fetch('/end_session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            }).catch(e => console.warn('Could not notify server of video session end:', e));
+        }
+
         function stopWebRTC() {
-            console.log("Stopping WebRTC session");
+            console.log("Stopping Audio WebRTC session");
             
             if (peerConnection) {
                 peerConnection.getSenders().forEach(sender => {
@@ -1073,12 +1564,52 @@
             }
             
             showStatus('Voice session ended');
+            endSession();
         }
 
-        // Voice session button handler
+        function stopVideoWebRTC() {
+            console.log("Stopping Video WebRTC session");
+            
+            if (videoPeerConnection) {
+                videoPeerConnection.getSenders().forEach(sender => {
+                    if (sender.track) {
+                        sender.track.stop();
+                    }
+                });
+                
+                videoPeerConnection.ontrack = null;
+                videoPeerConnection.onconnectionstatechange = null;
+
+                if (videoDataChannel) {
+                    videoDataChannel.onmessage = null;
+                    try { videoDataChannel.close(); } catch (e) { console.warn("Error closing video data channel:", e); }
+                    videoDataChannel = null;
+                }
+                
+                try { videoPeerConnection.close(); } catch (e) { console.warn("Error closing video peer connection:", e); }
+                videoPeerConnection = null;
+            }
+
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+
+            localVideo.srcObject = null;
+            
+            isVideoRecording = false;
+            isCameraOn = true;
+            
+            updateVideoButtonState();
+            showStatus('Video session ended');
+            endVideoSession();
+        }
+
+        // Event listeners for buttons
         startButton.addEventListener('click', (event) => {
+            // Check if clicking on mute toggle
             if (event.target.closest('.mute-toggle')) {
-                return;
+                return; // Let the mute toggle handle it
             }
 
             if (peerConnection && peerConnection.connectionState === 'connected') {
@@ -1092,13 +1623,47 @@
             }
         });
 
-        // Text Mode Implementation
+        startVideoButton.addEventListener('click', () => {
+            if (videoPeerConnection && videoPeerConnection.connectionState === 'connected') {
+                console.log("Ending video session");
+                stopVideoWebRTC();
+            } else if (!videoPeerConnection || ['new', 'closed', 'failed', 'disconnected'].includes(videoPeerConnection.connectionState)) {
+                console.log("Starting video session");
+                setupVideoWebRTC();
+                isVideoRecording = true;
+                updateVideoButtonState();
+            }
+        });
+
+        toggleCameraBtn.addEventListener('click', () => {
+            if (localStream) {
+                const videoTrack = localStream.getVideoTracks()[0];
+                if (videoTrack) {
+                    isCameraOn = !isCameraOn;
+                    videoTrack.enabled = isCameraOn;
+                    toggleCameraBtn.innerHTML = isCameraOn ? '📷 Turn Off Camera' : '📷 Turn On Camera';
+                    localStatus.textContent = isCameraOn ? 'Camera On' : 'Camera Off';
+                }
+            }
+        });
+
+        toggleMicBtn.addEventListener('click', () => {
+            if (localStream) {
+                const audioTrack = localStream.getAudioTracks()[0];
+                if (audioTrack) {
+                    const isMicOn = audioTrack.enabled;
+                    audioTrack.enabled = !isMicOn;
+                    toggleMicBtn.innerHTML = !isMicOn ? '🎤 Mute Mic' : '🎤 Unmute Mic';
+                }
+            }
+        });
+
+        // Text Mode Implementation (same as before)
         let textWebSocket = null;
         let recognition = null;
         let isListening = false;
 
         function initializeTextMode() {
-            // Speech Recognition Setup for text mode
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             
             if (SpeechRecognition) {
@@ -1135,13 +1700,11 @@
                 showStatus('Speech recognition not supported in this browser');
             }
 
-            // Auto-resize textarea
             userInput.addEventListener('input', () => {
                 userInput.style.height = 'auto';
                 userInput.style.height = (userInput.scrollHeight) + 'px';
             });
 
-            // Send message on Enter (without Shift)
             userInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -1149,9 +1712,13 @@
                 }
             });
 
-            // Button event listeners
             sendButton.addEventListener('click', sendTextMessage);
             micButton.addEventListener('click', toggleTextListening);
+        }
+
+        function initializeVideoMode() {
+            // Video mode initialization
+            showStatus('Video mode ready - upload files and click start to begin session');
         }
 
         function toggleTextListening() {
@@ -1219,7 +1786,6 @@
                 showStatus('Disconnected');
             };
 
-            // Add placeholder AI message
             addMessageToChat('Thinking...', 'ai');
         }
 
@@ -1245,10 +1811,12 @@
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
-        // Initialize the application
+        // Initialize
         updateButtonState();
+        updateVideoButtonState();
+        initializeTextMode();
 
-        console.log("AI Psychologist with Gemini Voice initialized successfully!");
+        console.log("AI Psychologist with Voice, Video & Text initialized successfully!");
     </script>
 </body>
 

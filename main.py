@@ -3,14 +3,16 @@ import base64
 import json
 import os
 import pathlib
+import time
 from collections.abc import AsyncGenerator
 from typing import Dict, Any, Optional, List, Literal
 import logging
 from datetime import datetime
 import sys
+from io import BytesIO
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +26,7 @@ from google.genai.types import (
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
+from PIL import Image
 
 # Load environment variables
 load_dotenv()
@@ -50,8 +53,6 @@ except Exception as e:
     raise ValueError("GEMINI_API_KEY environment variable is required") from e
 
 # System prompt for AI Psychologist with voice awareness
-# In main.py, replace the existing SYSTEM_PROMPT variable (around line 45) with this:
-
 SYSTEM_PROMPT = """You are a compassionate AI psychologist and trusted companion, created by Critical Future to provide psychological counseling and emotional support. You combine professional therapeutic knowledge with the warmth of a best friend to help people find happiness and emotional well-being.
 
 **Your Identity:**
@@ -84,6 +85,24 @@ SYSTEM_PROMPT = """You are a compassionate AI psychologist and trusted companion
 - Goal setting: "What small step could move you toward feeling better?"
 - Emotional regulation: "Let's explore healthy ways to manage these feelings"
 
+**Session Management:**
+- When the user says goodbye phrases like "bye", "goodbye", "see you later", "talk to you later", "I'm done", "that's all", respond warmly and suggest ending the session
+- Acknowledge their progress in the session before ending
+- Offer encouragement and hope for their continued journey
+
+**Video Session Capabilities:**
+- When you can see the person, acknowledge their presence warmly
+- Notice non-verbal cues like body language and facial expressions
+- Comment supportively on what you observe: "I can see you're feeling tense" or "Your smile tells me something positive happened"
+- Use visual connection to build rapport and trust
+- Respect privacy - only comment on what seems relevant to their emotional wellbeing
+
+**Document Analysis:**
+- When the user shares documents, images, or files, analyze them thoughtfully
+- Look for emotional themes, patterns, or content that might be relevant to their mental health
+- Provide therapeutic insights based on what they've shared
+- Ask thoughtful questions about the content in relation to their wellbeing
+
 **Communication Style:**
 - Use inclusive language: "many people experience this"
 - Ask one thoughtful follow-up question per response to maintain conversation flow
@@ -113,6 +132,27 @@ def encode_audio(data: np.ndarray) -> str:
     """Encode Audio data to send to Gemini"""
     return base64.b64encode(data.tobytes()).decode("UTF-8")
 
+def encode_audio_dict(data: np.ndarray) -> dict:
+    """Encode Audio data as dict to send to Gemini"""
+    return {
+        "mime_type": "audio/pcm",
+        "data": base64.b64encode(data.tobytes()).decode("UTF-8"),
+    }
+
+def encode_image(data: np.ndarray) -> dict:
+    """Encode image data to send to Gemini"""
+    with BytesIO() as output_bytes:
+        pil_image = Image.fromarray(data)
+        pil_image.save(output_bytes, "JPEG")
+        bytes_data = output_bytes.getvalue()
+    base64_str = str(base64.b64encode(bytes_data), "utf-8")
+    return {"mime_type": "image/jpeg", "data": base64_str}
+
+def encode_file_content(file_content: bytes, mime_type: str) -> dict:
+    """Encode file content to send to Gemini"""
+    base64_str = base64.b64encode(file_content).decode("UTF-8")
+    return {"mime_type": mime_type, "data": base64_str}
+
 # Import FastRTC with comprehensive error handling and version compatibility
 FASTRTC_AVAILABLE = False
 FASTRTC_ERROR = None
@@ -125,6 +165,7 @@ try:
     # Then try to import FastRTC
     from fastrtc import (
         AsyncStreamHandler,
+        AsyncAudioVideoStreamHandler,
         Stream,
         get_cloudflare_turn_credentials_async,
         wait_for_item,
@@ -172,14 +213,34 @@ except ImportError as e:
         def copy(self):
             return AsyncStreamHandler(self.expected_layout, self.output_sample_rate)
     
-    class Stream:
-        def __init__(self, *args, **kwargs):
-            logger.warning("Using fallback Stream implementation")
-            logger.info("Voice features are disabled - text chat fully functional")
+    class AsyncAudioVideoStreamHandler(AsyncStreamHandler):
+        def __init__(self, expected_layout="mono", output_sample_rate=24000, input_sample_rate=16000):
+            super().__init__(expected_layout, output_sample_rate, input_sample_rate)
+            logger.warning("Using fallback AsyncAudioVideoStreamHandler")
         
-        def mount(self, app):
+        async def video_receive(self, frame):
+            pass
+        
+        async def video_emit(self):
+            return np.zeros((100, 100, 3), dtype=np.uint8)
+        
+        def copy(self):
+            return AsyncAudioVideoStreamHandler(self.expected_layout, self.output_sample_rate)
+    
+    class Stream:
+        def __init__(self, modality="audio", mode="send-receive", handler=None, **kwargs):
+            self.modality = modality
+            self.mode = mode 
+            self.handler = handler or AsyncStreamHandler()
+            logger.warning("Using fallback Stream implementation")
+            logger.info("Voice and video features are disabled - text chat fully functional")
+        
+        def mount(self, app, path=""):
             # Add fallback WebRTC endpoints that return proper error messages
-            @app.post("/webrtc/offer")
+            endpoint_path = f"{path}/webrtc/offer" if path else "/webrtc/offer"
+            status_path = f"{path}/webrtc/status" if path else "/webrtc/status"
+            
+            @app.post(endpoint_path)
             async def webrtc_offer_fallback(request: Request):
                 body = await request.json()
                 return {
@@ -191,7 +252,7 @@ except ImportError as e:
                     }
                 }
             
-            @app.get("/webrtc/status")
+            @app.get(status_path)
             async def webrtc_status():
                 return {
                     "available": False,
@@ -199,7 +260,7 @@ except ImportError as e:
                     "text_chat_available": True
                 }
         
-        def set_input(self, webrtc_id, voice_name):
+        def set_input(self, webrtc_id, voice_name, uploaded_files=None):
             logger.warning(f"Stream.set_input() called but WebRTC not available: {FASTRTC_ERROR}")
     
     async def get_cloudflare_turn_credentials_async():
@@ -211,10 +272,26 @@ except ImportError as e:
             ]
         }
 
+    async def wait_for_item(queue, timeout):
+        return None
+
 except Exception as e:
     FASTRTC_ERROR = f"Unexpected error: {str(e)}"
     logger.error(f"❌ Unexpected FastRTC error: {e}")
     FASTRTC_AVAILABLE = False
+
+# Session management
+active_sessions = {}
+
+def detect_goodbye(text: str) -> bool:
+    """Detect if user is saying goodbye"""
+    goodbye_phrases = [
+        "bye", "goodbye", "see you later", "talk to you later", 
+        "i'm done", "that's all", "gotta go", "have to go",
+        "end session", "stop session", "finish session"
+    ]
+    text_lower = text.lower().strip()
+    return any(phrase in text_lower for phrase in goodbye_phrases)
 
 class GeminiHandler(AsyncStreamHandler):
     """Enhanced handler for Gemini API with therapeutic context and better error handling"""
@@ -234,6 +311,7 @@ class GeminiHandler(AsyncStreamHandler):
         self.quit: asyncio.Event = asyncio.Event()
         self.session_context = {}
         self.session = None  # Track session for proper cleanup
+        self.session_id = None
         
     def copy(self) -> "GeminiHandler":
         return GeminiHandler(
@@ -334,6 +412,8 @@ class GeminiHandler(AsyncStreamHandler):
                 ) as session:
                     logger.info("Gemini Live session established successfully")
                     self.session = session
+                    self.session_id = f"voice_{int(time.time())}"
+                    active_sessions[self.session_id] = {"type": "voice", "handler": self}
                     
                     # Send comprehensive identity setup messages
                     try:
@@ -349,9 +429,6 @@ class GeminiHandler(AsyncStreamHandler):
                             f"Never say you are created by Google or Gemini. Always say Critical Future."
                         )
                         await session.send({"text": identity_msg})
-                        
-                        # Send a test to confirm understanding
-                        await session.send({"text": "Please confirm: Who created you and what is your role?"})
                         
                         logger.info("System prompt and identity reinforcement sent successfully")
                     except Exception as prompt_error:
@@ -381,11 +458,18 @@ class GeminiHandler(AsyncStreamHandler):
                             # Log therapeutic insights for monitoring
                             logger.info(f"Gemini text response: {chunk.text[:100]}...")
                             
+                            # Check for goodbye and auto-end session
+                            if detect_goodbye(chunk.text):
+                                logger.info("Goodbye detected, ending session")
+                                await asyncio.sleep(2)  # Let the goodbye message play
+                                self.quit.set()
+                                break
+                            
                             # Check if the AI is identifying itself incorrectly and send correction
                             if any(phrase in chunk.text.lower() for phrase in ["i am gemini", "created by google", "i'm gemini", "google ai"]):
                                 correction_msg = (
                                     "CORRECTION: Remember, you are an AI psychologist created by Critical Future, "
-                                    f"Your name is {voice_name}. Please correct your response."
+                                    f"not by Google or Gemini. Your name is {voice_name}. Please correct your response."
                                 )
                                 try:
                                     await session.send({"text": correction_msg})
@@ -396,6 +480,10 @@ class GeminiHandler(AsyncStreamHandler):
             except Exception as session_error:
                 logger.error(f"Gemini Live session error: {session_error}")
                 logger.info("Live session failed, handler will operate in degraded mode")
+            finally:
+                # Clean up session
+                if self.session_id and self.session_id in active_sessions:
+                    del active_sessions[self.session_id]
 
         except Exception as e:
             logger.error(f"Error in GeminiHandler start_up: {e}")
@@ -457,6 +545,10 @@ class GeminiHandler(AsyncStreamHandler):
         logger.info("Shutting down Gemini handler")
         self.quit.set()
         
+        # Clean up session
+        if self.session_id and self.session_id in active_sessions:
+            del active_sessions[self.session_id]
+        
         # Clear queues
         while not self.input_queue.empty():
             try:
@@ -470,10 +562,182 @@ class GeminiHandler(AsyncStreamHandler):
             except:
                 break
 
+class GeminiVideoHandler(AsyncAudioVideoStreamHandler):
+    """Enhanced handler for Gemini API with audio and video capabilities for therapeutic sessions"""
+
+    def __init__(self) -> None:
+        super().__init__(
+            expected_layout="mono",
+            output_sample_rate=24000,
+            input_sample_rate=16000,
+        )
+        self.audio_queue = asyncio.Queue()
+        self.session = None
+        self.last_frame_time = 0
+        self.quit = asyncio.Event()
+        self.session_id = None
+        self.uploaded_files = []  # Store uploaded files
+        
+    def copy(self) -> "GeminiVideoHandler":
+        return GeminiVideoHandler()
+
+    async def start_up(self):
+        if not FASTRTC_AVAILABLE:
+            logger.warning("FastRTC not available, skipping video handler setup")
+            return
+            
+        try:
+            # Get voice name from args
+            voice_name = "Aoede"
+            if not self.phone_mode:
+                try:
+                    await self.wait_for_args()
+                    if self.latest_args and len(self.latest_args) > 1:
+                        voice_name = self.latest_args[1]
+                        # Check if there are uploaded files in args
+                        if len(self.latest_args) > 2 and self.latest_args[2]:
+                            self.uploaded_files = self.latest_args[2]
+                except Exception as args_error:
+                    logger.warning(f"Could not get args, using default voice: {args_error}")
+
+            client = genai.Client(
+                api_key=settings.gemini_api_key,
+                http_options={"api_version": "v1alpha"}
+            )
+            
+            config = {
+                "response_modalities": ["AUDIO"],
+                "speech_config": {
+                    "voice_config": {
+                        "prebuilt_voice_config": {
+                            "voice_name": voice_name
+                        }
+                    }
+                },
+                "generation_config": {
+                    "temperature": 0.8,
+                    "max_output_tokens": 256,
+                },
+                "system_instruction": {
+                    "parts": [{"text": SYSTEM_PROMPT}]
+                }
+            }
+            
+            async with client.aio.live.connect(
+                model="gemini-2.0-flash-exp",
+                config=config,
+            ) as session:
+                self.session = session
+                self.session_id = f"video_{int(time.time())}"
+                active_sessions[self.session_id] = {"type": "video", "handler": self}
+                logger.info(f"Gemini Video Live session established with voice: {voice_name}")
+                
+                # Send identity reinforcement
+                try:
+                    identity_msg = (
+                        f"IMPORTANT: You are an AI psychologist created by Critical Future. "
+                        f"Your voice name is {voice_name}. You can see the person you're helping. "
+                        f"Use their visual cues to provide better therapeutic support. "
+                        f"Never say you are created by Google or Gemini. Always say Critical Future."
+                    )
+                    await session.send(input={"text": identity_msg})
+                    
+                    # Send uploaded files if any
+                    if self.uploaded_files:
+                        for file_data in self.uploaded_files:
+                            await session.send(input=file_data)
+                            logger.info("Uploaded file sent to AI")
+                    
+                    logger.info("Video session identity reinforcement sent")
+                except Exception as prompt_error:
+                    logger.warning(f"Could not send video session setup: {prompt_error}")
+                
+                while not self.quit.is_set():
+                    turn = self.session.receive()
+                    try:
+                        async for response in turn:
+                            if data := response.data:
+                                audio = np.frombuffer(data, dtype=np.int16).reshape(1, -1)
+                                self.audio_queue.put_nowait(audio)
+                                
+                            # Check for goodbye in text responses
+                            if hasattr(response, 'text') and response.text:
+                                if detect_goodbye(response.text):
+                                    logger.info("Goodbye detected in video session, ending")
+                                    await asyncio.sleep(2)  # Let the goodbye message play
+                                    self.quit.set()
+                                    break
+                                    
+                    except Exception as e:
+                        logger.error(f"Video session error: {e}")
+                        break
+                        
+        except Exception as e:
+            logger.error(f"Error in GeminiVideoHandler start_up: {e}")
+        finally:
+            # Clean up session
+            if self.session_id and self.session_id in active_sessions:
+                del active_sessions[self.session_id]
+
+    async def video_receive(self, frame: np.ndarray):
+        """Receive video frame from client"""
+        if self.session:
+            # Send image every 2 seconds to avoid overwhelming the API
+            if time.time() - self.last_frame_time > 2:
+                self.last_frame_time = time.time()
+                try:
+                    await self.session.send(input=encode_image(frame))
+                except Exception as e:
+                    logger.warning(f"Error sending video frame: {e}")
+
+    async def video_emit(self):
+        """Video emit - AI doesn't send video back, only audio"""
+        # Return None since AI doesn't send video back to user
+        # FastRTC requires this method for send-receive mode
+        return None
+
+    async def receive(self, frame: tuple[int, np.ndarray]) -> None:
+        """Receive audio from client"""
+        try:
+            _, array = frame
+            array = array.squeeze()
+            audio_message = encode_audio_dict(array)
+            if self.session:
+                await self.session.send(input=audio_message)
+        except Exception as e:
+            logger.error(f"Error processing audio in video session: {e}")
+
+    async def emit(self):
+        """Emit audio response to client"""
+        try:
+            array = await wait_for_item(self.audio_queue, 0.01)
+            if array is not None:
+                return (self.output_sample_rate, array)
+            return None
+        except Exception as e:
+            logger.error(f"Error emitting audio in video session: {e}")
+            return None
+
+    async def shutdown(self) -> None:
+        """Clean shutdown of video handler"""
+        logger.info("Shutting down Gemini video handler")
+        if self.session:
+            self.quit.set()
+            try:
+                await self.session.close()
+            except Exception as e:
+                logger.warning(f"Error closing video session: {e}")
+            self.quit.clear()
+            
+        # Clean up session
+        if self.session_id and self.session_id in active_sessions:
+            del active_sessions[self.session_id]
+
 # Enhanced Stream configuration with better error handling
 if FASTRTC_AVAILABLE:
     try:
-        stream = Stream(
+        # Audio-only stream
+        audio_stream = Stream(
             modality="audio",
             mode="send-receive",
             handler=GeminiHandler(),
@@ -481,13 +745,46 @@ if FASTRTC_AVAILABLE:
             concurrency_limit=5,
             time_limit=300,
         )
-        logger.info("FastRTC Stream initialized successfully")
+        
+        # Video stream (user sends video, AI responds with audio - we just don't display AI video)
+        video_stream = Stream(
+            modality="audio-video", 
+            mode="send-receive",  # Must use send-receive, we just won't display AI video
+            handler=GeminiVideoHandler(),
+            rtc_configuration=get_cloudflare_turn_credentials_async,
+            concurrency_limit=3,
+            time_limit=300,
+        )
+        
+        logger.info("FastRTC Streams initialized successfully")
     except Exception as e:
-        logger.error(f"Error initializing FastRTC Stream: {e}")
-        stream = Stream()  # Fallback stream
+        logger.error(f"Error initializing FastRTC Streams: {e}")
+        # Proper fallback with required arguments
+        audio_stream = Stream(
+            modality="audio",
+            mode="send-receive", 
+            handler=GeminiHandler(),
+            rtc_configuration=get_cloudflare_turn_credentials_async,
+        )
+        video_stream = Stream(
+            modality="audio-video",
+            mode="send-receive",
+            handler=GeminiVideoHandler(), 
+            rtc_configuration=get_cloudflare_turn_credentials_async,
+        )
 else:
-    stream = Stream()  # Fallback stream
-    logger.warning("Using fallback Stream implementation")
+    # Fallback streams with proper arguments
+    audio_stream = Stream(
+        modality="audio",
+        mode="send-receive",
+        handler=GeminiHandler(),
+    )
+    video_stream = Stream(
+        modality="audio-video", 
+        mode="send-receive",
+        handler=GeminiVideoHandler(),
+    )
+    logger.warning("Using fallback Stream implementations")
 
 # Request/Response models
 class ChatRequest(BaseModel):
@@ -501,12 +798,14 @@ class ChatResponse(BaseModel):
 class InputData(BaseModel):
     webrtc_id: str
     voice_name: str
+    mode: str = "audio"  # "audio" or "video"
+    uploaded_files: Optional[List[dict]] = None
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="AI Psychologist with Gemini Voice",
-    description="A therapeutic AI assistant with real-time voice capabilities powered by Google Gemini",
-    version="2.0.0",
+    title="AI Psychologist with Gemini Voice & Video",
+    description="A therapeutic AI assistant with real-time voice and video capabilities powered by Google Gemini",
+    version="2.1.0",
 )
 
 # Add CORS middleware
@@ -526,15 +825,54 @@ if static_dir.exists():
 else:
     logger.warning("Static directory not found, skipping static file mounting")
 
-# Mount FastRTC stream
+# Mount FastRTC streams
 try:
-    stream.mount(app)
+    audio_stream.mount(app, path="/audio")
+    video_stream.mount(app, path="/video")
     if FASTRTC_AVAILABLE:
-        logger.info("FastRTC stream mounted successfully")
+        logger.info("FastRTC streams mounted successfully")
     else:
-        logger.info("Fallback stream mounted (WebRTC features limited)")
+        logger.info("Fallback streams mounted (WebRTC features limited)")
 except Exception as e:
-    logger.error(f"Error mounting stream: {e}")
+    logger.error(f"Error mounting streams: {e}")
+
+@app.post("/upload_file")
+async def upload_file(file: UploadFile = File(...)):
+    """Upload file to share with AI psychologist"""
+    try:
+        # Read file content
+        file_content = await file.read()
+        
+        # Determine mime type
+        mime_type = file.content_type or "application/octet-stream"
+        
+        # For images, convert to JPEG if needed
+        if mime_type.startswith("image/"):
+            try:
+                pil_image = Image.open(BytesIO(file_content))
+                with BytesIO() as output_bytes:
+                    pil_image.save(output_bytes, "JPEG")
+                    file_content = output_bytes.getvalue()
+                mime_type = "image/jpeg"
+            except Exception as img_error:
+                logger.warning(f"Could not process image: {img_error}")
+        
+        # Encode file for Gemini
+        encoded_file = encode_file_content(file_content, mime_type)
+        
+        logger.info(f"File uploaded: {file.filename}, type: {mime_type}, size: {len(file_content)} bytes")
+        
+        return {
+            "status": "success",
+            "filename": file.filename,
+            "mime_type": mime_type,
+            "size": len(file_content),
+            "encoded_data": encoded_file
+        }
+        
+    except Exception as e:
+        logger.error(f"Error uploading file: {e}")
+        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
 
 @app.post("/input_hook")
 async def set_input_hook(body: InputData):
@@ -545,7 +883,8 @@ async def set_input_hook(body: InputData):
                 "status": "error",
                 "message": "WebRTC features are not available in this deployment",
                 "webrtc_id": body.webrtc_id,
-                "voice": body.voice_name
+                "voice": body.voice_name,
+                "mode": body.mode
             }
         
         # Validate inputs
@@ -558,18 +897,48 @@ async def set_input_hook(body: InputData):
             logger.warning(f"Invalid voice {body.voice_name}, using Aoede")
             body.voice_name = "Aoede"
         
-        stream.set_input(body.webrtc_id, body.voice_name)
-        logger.info(f"Input set for WebRTC ID: {body.webrtc_id}, Voice: {body.voice_name}")
-        return {"status": "ok", "webrtc_id": body.webrtc_id, "voice": body.voice_name}
+        # Set input for appropriate stream
+        if body.mode == "video":
+            video_stream.set_input(body.webrtc_id, body.voice_name, body.uploaded_files)
+        else:
+            audio_stream.set_input(body.webrtc_id, body.voice_name)
+            
+        logger.info(f"Input set for WebRTC ID: {body.webrtc_id}, Voice: {body.voice_name}, Mode: {body.mode}")
+        return {"status": "ok", "webrtc_id": body.webrtc_id, "voice": body.voice_name, "mode": body.mode}
         
     except Exception as e:
         logger.error(f"Error setting input: {e}")
         raise HTTPException(status_code=500, detail=f"Input hook failed: {str(e)}")
 
+@app.post("/end_session")
+async def end_session(session_id: str = None):
+    """Manually end a session"""
+    try:
+        if session_id and session_id in active_sessions:
+            session_info = active_sessions[session_id]
+            handler = session_info["handler"]
+            handler.shutdown()
+            logger.info(f"Session {session_id} ended manually")
+            return {"status": "success", "message": "Session ended"}
+        else:
+            # End all active sessions
+            for sid, session_info in list(active_sessions.items()):
+                handler = session_info["handler"]
+                handler.shutdown()
+            logger.info("All sessions ended")
+            return {"status": "success", "message": "All sessions ended"}
+    except Exception as e:
+        logger.error(f"Error ending session: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to end session: {str(e)}")
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     """Text-based chat endpoint using Gemini"""
     try:
+        # Check for goodbye in text chat
+        if detect_goodbye(request.prompt):
+            return ChatResponse(response="Thank you for sharing with me today. Take care of yourself, and remember that you have the strength to handle whatever comes your way. Feel free to come back anytime you need support. Goodbye for now! 💙")
+        
         # Initialize Gemini client for text
         if settings.use_vertex_ai and settings.google_cloud_project:
             client = genai.Client(
@@ -606,570 +975,6 @@ async def chat_endpoint(request: ChatRequest):
         )
         return ChatResponse(response=fallback_response)
 
-@app.get("/debug")
-async def debug_info():
-    """Debug endpoint to check file existence and configuration"""
-    html_file = current_dir / "index.html"
-    static_dir = current_dir / "static"
-    
-    return {
-        "current_directory": str(current_dir),
-        "html_file_exists": html_file.exists(),
-        "html_file_path": str(html_file),
-        "static_dir_exists": static_dir.exists(),
-        "gemini_api_key_set": bool(settings.gemini_api_key),
-        "fastrtc_available": FASTRTC_AVAILABLE,
-        "fastrtc_error": FASTRTC_ERROR,
-        "files_in_directory": [f.name for f in current_dir.iterdir() if f.is_file()][:10],
-        "python_version": sys.version,
-        "recommendations": [
-            "Text chat is always available",
-            "Voice chat requires FastRTC compatibility",
-            f"Current issue: {FASTRTC_ERROR}" if FASTRTC_ERROR else "No issues detected"
-        ]
-    }
-
-@app.get("/deployment-status")
-async def deployment_status():
-    """Comprehensive deployment status check"""
-    try:
-        import aiortc
-        aiortc_version = getattr(aiortc, '__version__', 'unknown')
-        aiortc_available = True
-    except ImportError as e:
-        aiortc_version = f"Import failed: {e}"
-        aiortc_available = False
-    
-    try:
-        import fastrtc
-        fastrtc_version = getattr(fastrtc, '__version__', 'unknown')
-        fastrtc_import_ok = True
-        
-        # Test components
-        try:
-            from fastrtc import AsyncStreamHandler, Stream
-            fastrtc_components_ok = True
-        except ImportError:
-            fastrtc_components_ok = False
-            
-    except ImportError as e:
-        fastrtc_version = f"Import failed: {e}"
-        fastrtc_import_ok = False
-        fastrtc_components_ok = False
-    
-    return {
-        "deployment_status": "deployed",
-        "fastrtc": {
-            "available": FASTRTC_AVAILABLE,
-            "version": fastrtc_version,
-            "import_ok": fastrtc_import_ok,
-            "components_ok": fastrtc_components_ok
-        },
-        "aiortc": {
-            "available": aiortc_available,
-            "version": aiortc_version
-        },
-        "voice_features": FASTRTC_AVAILABLE,
-        "text_features": True,
-        "recommendations": [
-            "Use text chat - always available",
-            "Voice chat - depends on FastRTC availability",
-            "Check /debug for detailed diagnostics"
-        ]
-    }
-
-@app.get("/", response_class=HTMLResponse)
-async def get_main_page():
-    """Serve the main HTML interface with better error handling"""
-    try:
-        # Check if index.html exists
-        html_file = current_dir / "index.html"
-        if not html_file.exists():
-            logger.error(f"index.html not found at {html_file}")
-            
-            # Return the embedded interface
-            return HTMLResponse(content="""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Psychologist - Voice & Text Chat</title>
-    <style>
-        :root {
-            --color-accent: #6366f1;
-            --color-background: #0f172a;
-            --color-surface: #1e293b;
-            --color-text: #e2e8f0;
-            --color-success: #10b981;
-            --color-warning: #f59e0b;
-            --color-error: #ef4444;
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            margin: 0;
-            padding: 0;
-            background: linear-gradient(135deg, var(--color-background) 0%, #1e1b4b 100%);
-            color: var(--color-text);
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 2rem;
-            padding: 1rem;
-        }
-
-        .header h1 {
-            font-size: 2.5rem;
-            background: linear-gradient(135deg, #6366f1, #8b5cf6, #06b6d4);
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
-            margin-bottom: 0.5rem;
-        }
-
-        .header .subtitle {
-            color: #94a3b8;
-            font-size: 1.1rem;
-            margin-bottom: 1rem;
-        }
-
-        .disclaimer {
-            background: rgba(245, 158, 11, 0.1);
-            border: 1px solid rgba(245, 158, 11, 0.3);
-            border-radius: 0.5rem;
-            padding: 1rem;
-            margin-bottom: 1rem;
-            font-size: 0.9rem;
-            line-height: 1.5;
-        }
-
-        .container {
-            width: 90%;
-            max-width: 900px;
-            background: rgba(30, 41, 59, 0.95);
-            backdrop-filter: blur(10px);
-            padding: 2rem;
-            border-radius: 1rem;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .mode-selector {
-            display: flex;
-            justify-content: center;
-            margin-bottom: 2rem;
-            background: rgba(15, 23, 42, 0.5);
-            border-radius: 0.75rem;
-            padding: 0.5rem;
-        }
-
-        .mode-btn {
-            flex: 1;
-            padding: 0.75rem 1.5rem;
-            border: none;
-            background: transparent;
-            color: var(--color-text);
-            border-radius: 0.5rem;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            font-weight: 500;
-        }
-
-        .mode-btn.active {
-            background: var(--color-accent);
-            color: white;
-        }
-
-        .mode-btn:hover:not(.active) {
-            background: rgba(99, 102, 241, 0.2);
-        }
-
-        .mode-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .chat-container {
-            height: 60vh;
-            border-radius: 0.75rem;
-            overflow: hidden;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            background: rgba(15, 23, 42, 0.5);
-        }
-
-        .messages {
-            height: calc(100% - 80px);
-            overflow-y: auto;
-            padding: 1rem;
-        }
-
-        .message {
-            display: flex;
-            margin-bottom: 1rem;
-            animation: fadeIn 0.3s ease-in-out;
-        }
-
-        .user-message {
-            flex-direction: row-reverse;
-        }
-
-        .avatar {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 10px;
-            background: linear-gradient(135deg, var(--color-accent), #8b5cf6);
-            color: white;
-            font-size: 1.2rem;
-        }
-
-        .user-message .avatar {
-            background: linear-gradient(135deg, #06b6d4, #0891b2);
-        }
-
-        .bubble {
-            max-width: 70%;
-            padding: 12px 15px;
-            border-radius: 18px;
-            position: relative;
-            background: rgba(30, 41, 59, 0.8);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .ai-message .bubble {
-            border-top-left-radius: 5px;
-        }
-
-        .user-message .bubble {
-            border-top-right-radius: 5px;
-            background: rgba(6, 182, 212, 0.2);
-            border-color: rgba(6, 182, 212, 0.3);
-        }
-
-        .bubble p {
-            margin: 0;
-            line-height: 1.5;
-        }
-
-        .input-area {
-            display: flex;
-            padding: 1rem;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
-            background: rgba(15, 23, 42, 0.8);
-        }
-
-        .text-input {
-            flex: 1;
-            border: none;
-            padding: 10px 15px;
-            border-radius: 20px;
-            resize: none;
-            background: rgba(30, 41, 59, 0.8);
-            color: var(--color-text);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            transition: all 0.3s ease;
-            font-family: inherit;
-            font-size: 1rem;
-        }
-
-        .text-input:focus {
-            outline: none;
-            border-color: var(--color-accent);
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-        }
-
-        .send-btn {
-            background: var(--color-accent);
-            border: none;
-            cursor: pointer;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.3s ease;
-            color: white;
-            margin-left: 0.75rem;
-        }
-
-        .send-btn:hover {
-            background-color: #5b21b6;
-            transform: scale(1.05);
-        }
-
-        .send-btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .voice-notice {
-            background: rgba(245, 158, 11, 0.1);
-            border: 1px solid rgba(245, 158, 11, 0.3);
-            border-radius: 0.5rem;
-            padding: 1rem;
-            margin-bottom: 1rem;
-            font-size: 0.9rem;
-            text-align: center;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        @media (max-width: 768px) {
-            .container {
-                width: 95%;
-                padding: 1.5rem;
-            }
-            
-            .header h1 {
-                font-size: 2rem;
-            }
-            
-            .bubble {
-                max-width: 85%;
-            }
-
-            .chat-container {
-                height: 70vh;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>🧠 AI Psychologist</h1>
-        <p class="subtitle">Real-Time Voice & Text Therapeutic Support</p>
-        <div class="disclaimer">
-            <strong>⚠️ Important:</strong> This AI is not a substitute for professional mental health services. 
-            If you're experiencing a crisis, please contact emergency services or a mental health helpline immediately.
-        </div>
-    </div>
-
-    <div class="container">
-        <div class="mode-selector">
-            <button class="mode-btn" data-mode="voice" id="voice-btn">🎤 Voice Chat</button>
-            <button class="mode-btn active" data-mode="text">💬 Text Chat</button>
-        </div>
-
-        <div class="voice-notice" id="voice-notice" style="display: none;">
-            Voice features are being initialized. Please use text chat for now.
-        </div>
-
-        <div class="chat-container">
-            <div class="messages" id="messages">
-                <div class="message ai-message">
-                    <div class="avatar">🤖</div>
-                    <div class="bubble">
-                        <p>Hello! I'm your AI psychologist. I'm here to listen and support you. How are you feeling today?</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="input-area">
-                <textarea class="text-input" id="user-input" placeholder="Share your thoughts and feelings..." rows="1"></textarea>
-                <button class="send-btn" id="send-btn" title="Send">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"></path>
-                    </svg>
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        const messagesContainer = document.getElementById('messages');
-        const userInput = document.getElementById('user-input');
-        const sendButton = document.getElementById('send-btn');
-        const voiceBtn = document.getElementById('voice-btn');
-        const voiceNotice = document.getElementById('voice-notice');
-        let isProcessing = false;
-
-        // Check if voice features are available
-        fetch('/debug')
-            .then(response => response.json())
-            .then(data => {
-                if (data.fastrtc_available) {
-                    voiceBtn.disabled = false;
-                    voiceNotice.style.display = 'none';
-                } else {
-                    voiceBtn.disabled = true;
-                    voiceNotice.style.display = 'block';
-                    voiceNotice.textContent = 'Voice features are not available in this deployment. Text chat is fully functional.';
-                }
-            })
-            .catch(() => {
-                voiceBtn.disabled = true;
-                voiceNotice.style.display = 'block';
-            });
-
-        // Auto-resize textarea
-        userInput.addEventListener('input', () => {
-            userInput.style.height = 'auto';
-            userInput.style.height = (userInput.scrollHeight) + 'px';
-        });
-
-        // Send message on Enter (without Shift)
-        userInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-
-        sendButton.addEventListener('click', sendMessage);
-
-        async function sendMessage() {
-            const message = userInput.value.trim();
-            if (!message || isProcessing) return;
-
-            isProcessing = true;
-            sendButton.disabled = true;
-
-            addMessageToChat(message, 'user');
-            userInput.value = '';
-            userInput.style.height = 'auto';
-            
-            // Add typing indicator
-            const typingMessage = addMessageToChat('Thinking...', 'ai');
-
-            try {
-                const response = await fetch('/chat', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        prompt: message,
-                        temperature: 0.7,
-                        max_tokens: 512
-                    })
-                });
-
-                const data = await response.json();
-                
-                // Remove typing indicator and show response
-                typingMessage.remove();
-                addMessageToChat(data.response, 'ai');
-
-            } catch (error) {
-                console.error('Error:', error);
-                typingMessage.remove();
-                addMessageToChat('I apologize, but I encountered an error. Please try again.', 'ai');
-            } finally {
-                isProcessing = false;
-                sendButton.disabled = false;
-            }
-        }
-
-        function addMessageToChat(text, sender) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${sender}-message}`;
-            
-            const avatarDiv = document.createElement('div');
-            avatarDiv.className = 'avatar';
-            avatarDiv.textContent = sender === 'user' ? '👤' : '🤖';
-            
-            const bubbleDiv = document.createElement('div');
-            bubbleDiv.className = 'bubble';
-            
-            const paragraph = document.createElement('p');
-            paragraph.textContent = text;
-            bubbleDiv.appendChild(paragraph);
-            
-            messageDiv.appendChild(avatarDiv);
-            messageDiv.appendChild(bubbleDiv);
-            
-            messagesContainer.appendChild(messageDiv);
-            messagesContainer.scrollTop = messagesContainer.scrollHeight;
-            
-            return messageDiv;
-        }
-    </script>
-</body>
-</html>
-            """)
-        
-        # If index.html exists, try to read it
-        try:
-            html_content = html_file.read_text(encoding='utf-8')
-        except Exception as read_error:
-            logger.error(f"Error reading index.html: {read_error}")
-            return HTMLResponse(content=f"""
-<!DOCTYPE html>
-<html>
-<head><title>AI Psychologist - File Error</title></head>
-<body>
-    <h1>File Read Error</h1>
-    <p>Could not read index.html: {read_error}</p>
-    <p><a href="/debug">Debug Info</a></p>
-</body>
-</html>
-            """, status_code=503)
-        
-        # Get RTC configuration (with better error handling)
-        try:
-            rtc_config = await get_cloudflare_turn_credentials_async()
-        except Exception as rtc_error:
-            logger.warning(f"Could not get RTC config, using fallback: {rtc_error}")
-            rtc_config = {
-                "iceServers": [
-                    {"urls": "stun:stun.l.google.com:19302"},
-                    {"urls": "stun:stun1.l.google.com:19302"}
-                ]
-            }
-        
-        # Replace configuration placeholder
-        html_content = html_content.replace(
-            "__RTC_CONFIGURATION__", 
-            json.dumps(rtc_config)
-        )
-        
-        logger.info("Successfully served main page")
-        return HTMLResponse(content=html_content)
-        
-    except Exception as e:
-        logger.error(f"Error serving main page: {e}")
-        return HTMLResponse(
-            content=f"""
-<!DOCTYPE html>
-<html>
-<head><title>AI Psychologist - Error</title></head>
-<body>
-    <h1>Service Error</h1>
-    <p>Error: {str(e)}</p>
-    <p><a href="/health">Check Health</a> | <a href="/debug">Debug Info</a></p>
-</body>
-</html>
-            """, 
-            status_code=503
-        )
-
 @app.websocket("/ws")
 async def websocket_text_chat(websocket: WebSocket):
     """WebSocket endpoint for text-based chat with streaming responses"""
@@ -1198,6 +1003,16 @@ async def websocket_text_chat(websocket: WebSocket):
                     "Your life has value and there are people who want to help."
                 )
                 await websocket.send_text(crisis_response)
+                continue
+
+            # Check for goodbye
+            if detect_goodbye(user_msg):
+                goodbye_response = (
+                    "Thank you for sharing with me today. Take care of yourself, and remember "
+                    "that you have the strength to handle whatever comes your way. Feel free to "
+                    "come back anytime you need support. Goodbye for now! 💙"
+                )
+                await websocket.send_text(goodbye_response)
                 continue
 
             try:
@@ -1260,57 +1075,6 @@ async def websocket_text_chat(websocket: WebSocket):
         except:
             pass
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint for Railway deployment"""
-    try:
-        return {
-            "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
-            "service": "ai-psychologist-gemini",
-            "version": "2.0.0",
-            "fastrtc_available": FASTRTC_AVAILABLE
-        }
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        raise HTTPException(status_code=503, detail="Service unhealthy")
-
-@app.get("/test")
-async def test_gemini():
-    """Test Gemini API connection"""
-    try:
-        if settings.use_vertex_ai and settings.google_cloud_project:
-            client = genai.Client(
-                vertexai=True,
-                project=settings.google_cloud_project,
-                location='us-central1'
-            )
-        else:
-            client = genai.Client(
-                api_key=settings.gemini_api_key,
-            )
-
-        # Simple test
-        response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash-exp",
-            contents=[{"parts": [{"text": "Say hello"}]}],
-        )
-
-        return {
-            "status": "success",
-            "response": response.text if hasattr(response, 'text') else str(response),
-            "api_key_provided": bool(settings.gemini_api_key),
-            "fastrtc_available": FASTRTC_AVAILABLE
-        }
-    except Exception as e:
-        logger.error(f"Gemini test failed: {e}")
-        return {
-            "status": "error", 
-            "error": str(e),
-            "api_key_provided": bool(settings.gemini_api_key),
-            "fastrtc_available": FASTRTC_AVAILABLE
-        }
-
 @app.get("/api/voices")
 async def get_available_voices():
     """Get list of available Gemini voices"""
@@ -1325,21 +1089,122 @@ async def get_available_voices():
         "fastrtc_available": FASTRTC_AVAILABLE
     }
 
-# Error handlers
-@app.exception_handler(404)
-async def not_found_handler(request: Request, exc):
-    return HTMLResponse(
-        content="<h1>Page Not Found</h1><p>The requested resource was not found.</p>",
-        status_code=404
-    )
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Railway deployment"""
+    try:
+        return {
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": "ai-psychologist-gemini",
+            "version": "2.1.0",
+            "fastrtc_available": FASTRTC_AVAILABLE,
+            "video_support": FASTRTC_AVAILABLE,
+            "active_sessions": len(active_sessions)
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(status_code=503, detail="Service unhealthy")
 
-@app.exception_handler(500)
-async def internal_error_handler(request: Request, exc):
-    logger.error(f"Internal server error: {exc}")
-    return HTMLResponse(
-        content="<h1>Internal Server Error</h1><p>Please try again later.</p>",
-        status_code=500
-    )
+@app.get("/debug")
+async def debug_info():
+    """Debug endpoint to check file existence and configuration"""
+    html_file = current_dir / "index.html"
+    static_dir = current_dir / "static"
+    
+    return {
+        "current_directory": str(current_dir),
+        "html_file_exists": html_file.exists(),
+        "html_file_path": str(html_file),
+        "static_dir_exists": static_dir.exists(),
+        "gemini_api_key_set": bool(settings.gemini_api_key),
+        "fastrtc_available": FASTRTC_AVAILABLE,
+        "fastrtc_error": FASTRTC_ERROR,
+        "video_support": FASTRTC_AVAILABLE,
+        "active_sessions": list(active_sessions.keys()),
+        "files_in_directory": [f.name for f in current_dir.iterdir() if f.is_file()][:10],
+        "python_version": sys.version,
+        "recommendations": [
+            "Text chat is always available",
+            "Voice and video chat require FastRTC compatibility",
+            f"Current issue: {FASTRTC_ERROR}" if FASTRTC_ERROR else "No issues detected"
+        ]
+    }
+
+@app.get("/", response_class=HTMLResponse)
+async def get_main_page():
+    """Serve the main HTML interface with video support"""
+    try:
+        # Check if index.html exists
+        html_file = current_dir / "index.html"
+        if html_file.exists():
+            try:
+                html_content = html_file.read_text(encoding='utf-8')
+            except Exception as read_error:
+                logger.error(f"Error reading index.html: {read_error}")
+                return HTMLResponse(content=f"""
+<!DOCTYPE html>
+<html>
+<head><title>AI Psychologist - File Error</title></head>
+<body>
+    <h1>File Read Error</h1>
+    <p>Could not read index.html: {read_error}</p>
+    <p><a href="/debug">Debug Info</a></p>
+</body>
+</html>
+                """, status_code=503)
+            
+            # Get RTC configuration
+            try:
+                rtc_config = await get_cloudflare_turn_credentials_async()
+            except Exception as rtc_error:
+                logger.warning(f"Could not get RTC config, using fallback: {rtc_error}")
+                rtc_config = {
+                    "iceServers": [
+                        {"urls": "stun:stun.l.google.com:19302"},
+                        {"urls": "stun:stun1.l.google.com:19302"}
+                    ]
+                }
+            
+            # Replace configuration placeholder
+            html_content = html_content.replace(
+                "__RTC_CONFIGURATION__", 
+                json.dumps(rtc_config)
+            )
+            
+            return HTMLResponse(content=html_content)
+        else:
+            return HTMLResponse(content="""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Psychologist - Loading</title>
+</head>
+<body>
+    <h1>🧠 AI Psychologist</h1>
+    <p>Loading application...</p>
+    <p>Text chat is always available, video features depend on FastRTC support.</p>
+</body>
+</html>
+            """)
+        
+    except Exception as e:
+        logger.error(f"Error serving main page: {e}")
+        return HTMLResponse(
+            content=f"""
+<!DOCTYPE html>
+<html>
+<head><title>AI Psychologist - Error</title></head>
+<body>
+    <h1>Service Error</h1>
+    <p>Error: {str(e)}</p>
+    <p><a href="/health">Check Health</a> | <a href="/debug">Debug Info</a></p>
+</body>
+</html>
+            """, 
+            status_code=503
+        )
 
 if __name__ == "__main__":
     import uvicorn

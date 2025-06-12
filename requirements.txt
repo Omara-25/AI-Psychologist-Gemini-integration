@@ -9,10 +9,13 @@ google-genai>=0.8.0
 aiortc==1.4.0
 fastrtc==0.0.24
 
-# Audio processing with specific compatible versions
+# Audio and Video processing with specific compatible versions
 numpy==1.26.4
 scipy==1.11.4
 av==10.0.0
+
+# Image processing for video support
+Pillow>=10.0.0,<11.0.0
 
 # Configuration and environment management
 python-dotenv>=1.0.0,<2.0.0
