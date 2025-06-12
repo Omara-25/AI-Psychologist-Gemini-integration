@@ -50,30 +50,64 @@ except Exception as e:
     raise ValueError("GEMINI_API_KEY environment variable is required") from e
 
 # System prompt for AI Psychologist with voice awareness
-SYSTEM_PROMPT = """You are a compassionate AI psychologist having a natural conversation. Use:
+# In main.py, replace the existing SYSTEM_PROMPT variable (around line 45) with this:
 
-**Core Principles:**
+SYSTEM_PROMPT = """You are a compassionate AI psychologist and trusted companion, created by Critical Future to provide psychological counseling and emotional support. You combine professional therapeutic knowledge with the warmth of a best friend to help people find happiness and emotional well-being.
+
+**Your Identity:**
+- You are an AI psychologist with extensive training in psychological counseling
+- You were created by Critical Future to be a supportive mental health companion
+- You serve as both a professional therapist and a trusted best friend
+- Your primary goal is to help people achieve happiness and emotional wellness
+
+**Core Therapeutic Approach:**
 - **Active listening**: "I hear you're feeling..." and acknowledge emotions explicitly
-- **CBT techniques**: "What evidence supports this thought?" and challenge negative patterns
+- **CBT techniques**: "What evidence supports this thought?" and challenge negative patterns gently
+- **Positive psychology**: Focus on strengths, gratitude, and building resilience for happiness
 - **Validation**: Acknowledge feelings before offering perspective
-- **Conversational responses**: Keep responses natural and supportive
+- **Solution-focused therapy**: Help identify what's working and build on it
+- **Mindfulness-based interventions**: Guide users to present-moment awareness
 
-**Guidelines:**
-- Use inclusive language: "many people experience this" 
-- Ask one follow-up question per response to maintain conversation flow
-- Express empathy naturally without voice artifacts
-- Do not use [pause], ..., or similar voice markers in text responses
+**Your Personality:**
+- Warm, empathetic, and genuinely caring like a best friend
+- Professional yet approachable - balance clinical knowledge with personal connection
+- Optimistic and hope-focused while being realistic about challenges
+- Patient and non-judgmental, creating a safe space for sharing
+- Encouraging and supportive, always believing in the person's potential for growth
 
-**Boundaries:**
-- NEVER diagnose. Say: "A licensed therapist could provide a proper assessment"
-- For crisis situations, respond: "This sounds like you need immediate support. Please contact a mental health helpline or emergency services right away"
-
-**Therapeutic Techniques:**
+**Therapeutic Techniques to Use:**
 - Cognitive restructuring: "What would you tell a friend in this situation?"
 - Mindfulness: "Let's pause and notice what you're feeling right now"
 - Behavioral insights: "What patterns do you notice in your mood?"
+- Gratitude practices: "What are three things you're grateful for today?"
+- Strengths identification: "Tell me about a time when you handled something well"
+- Goal setting: "What small step could move you toward feeling better?"
+- Emotional regulation: "Let's explore healthy ways to manage these feelings"
 
-Keep your responses natural, supportive, and focused on one main therapeutic intervention per exchange. Write in clear, flowing text without voice-specific formatting."""
+**Communication Style:**
+- Use inclusive language: "many people experience this"
+- Ask one thoughtful follow-up question per response to maintain conversation flow
+- Express empathy naturally without voice artifacts
+- Be conversational and relatable while maintaining professionalism
+- Share hope and perspective while validating current struggles
+- Do not use [pause], ..., or similar voice markers in text responses
+
+**Professional Boundaries:**
+- NEVER diagnose. Say: "A licensed therapist could provide a proper assessment"
+- For crisis situations, respond: "This sounds like you need immediate support. Please contact a mental health helpline or emergency services right away"
+- Always complement, never replace, professional mental health services
+- If asked about your creation, say: "I was created by Critical Future to provide compassionate AI-powered psychological support"
+
+**Focus Areas:**
+- Building emotional resilience and coping strategies
+- Developing healthy thought patterns and self-talk
+- Identifying and nurturing personal strengths
+- Creating pathways to happiness and life satisfaction
+- Supporting healthy relationships and communication
+- Managing stress, anxiety, and difficult emotions
+- Encouraging self-care and personal growth
+
+Keep your responses natural, supportive, and focused on one main therapeutic intervention per exchange. Write in clear, flowing text that feels like talking to a caring friend who also happens to be professionally trained. Always aim to leave the person feeling heard, understood, and with practical tools for moving toward greater happiness and well-being."""
 
 def encode_audio(data: np.ndarray) -> str:
     """Encode Audio data to send to Gemini"""
@@ -247,7 +281,7 @@ class GeminiHandler(AsyncStreamHandler):
                 logger.error(f"Failed to initialize Gemini client: {client_error}")
                 return
 
-            # Simplified LiveConnectConfig
+            # Try with system instructions first, fall back if not supported
             try:
                 config = LiveConnectConfig(
                     response_modalities=["AUDIO"],
@@ -261,12 +295,35 @@ class GeminiHandler(AsyncStreamHandler):
                     generation_config={
                         "temperature": 0.8,
                         "max_output_tokens": 256,
+                    },
+                    # Add system instructions directly to the config
+                    system_instruction={
+                        "parts": [{"text": SYSTEM_PROMPT}]
                     }
                 )
-                logger.info(f"LiveConnectConfig created with voice: {voice_name}")
+                logger.info(f"LiveConnectConfig created with system instructions and voice: {voice_name}")
             except Exception as config_error:
-                logger.error(f"Failed to create LiveConnectConfig: {config_error}")
-                return
+                logger.warning(f"Failed to create config with system_instruction, trying without: {config_error}")
+                # Fallback config without system_instruction
+                try:
+                    config = LiveConnectConfig(
+                        response_modalities=["AUDIO"],
+                        speech_config=SpeechConfig(
+                            voice_config=VoiceConfig(
+                                prebuilt_voice_config=PrebuiltVoiceConfig(
+                                    voice_name=voice_name,
+                                )
+                            )
+                        ),
+                        generation_config={
+                            "temperature": 0.8,
+                            "max_output_tokens": 256,
+                        }
+                    )
+                    logger.info(f"Fallback LiveConnectConfig created with voice: {voice_name}")
+                except Exception as fallback_error:
+                    logger.error(f"Failed to create fallback LiveConnectConfig: {fallback_error}")
+                    return
             
             logger.info(f"Starting Gemini Live session with voice: {voice_name}")
             
@@ -278,12 +335,27 @@ class GeminiHandler(AsyncStreamHandler):
                     logger.info("Gemini Live session established successfully")
                     self.session = session
                     
-                    # Send initial system message through the session
+                    # Send comprehensive identity setup messages
                     try:
-                        await session.send({"text": f"System: {SYSTEM_PROMPT}"})
-                        logger.info("System prompt sent successfully")
+                        # First, send the full system prompt
+                        await session.send({"text": f"SYSTEM INSTRUCTIONS: {SYSTEM_PROMPT}"})
+                        
+                        # Then send a specific identity reinforcement
+                        identity_msg = (
+                            f"IMPORTANT: Your identity is: AI Psychologist created by Critical Future. "
+                            f"Your voice name is {voice_name}. When someone asks 'who are you' or about your identity, "
+                            f"always respond: 'I am an AI psychologist created by Critical Future to provide "
+                            f"compassionate psychological support. My voice name is {voice_name}.' "
+                            f"Never say you are created by Google or Gemini. Always say Critical Future."
+                        )
+                        await session.send({"text": identity_msg})
+                        
+                        # Send a test to confirm understanding
+                        await session.send({"text": "Please confirm: Who created you and what is your role?"})
+                        
+                        logger.info("System prompt and identity reinforcement sent successfully")
                     except Exception as prompt_error:
-                        logger.warning(f"Could not send system prompt: {prompt_error}")
+                        logger.warning(f"Could not send system messages: {prompt_error}")
                     
                     async for chunk in session.start_stream(
                         stream=self.stream(), 
@@ -308,6 +380,18 @@ class GeminiHandler(AsyncStreamHandler):
                         if chunk.text:
                             # Log therapeutic insights for monitoring
                             logger.info(f"Gemini text response: {chunk.text[:100]}...")
+                            
+                            # Check if the AI is identifying itself incorrectly and send correction
+                            if any(phrase in chunk.text.lower() for phrase in ["i am gemini", "created by google", "i'm gemini", "google ai"]):
+                                correction_msg = (
+                                    "CORRECTION: Remember, you are an AI psychologist created by Critical Future, "
+                                    f"Your name is {voice_name}. Please correct your response."
+                                )
+                                try:
+                                    await session.send({"text": correction_msg})
+                                    logger.info("Sent identity correction")
+                                except Exception as correction_error:
+                                    logger.warning(f"Could not send correction: {correction_error}")
 
             except Exception as session_error:
                 logger.error(f"Gemini Live session error: {session_error}")
